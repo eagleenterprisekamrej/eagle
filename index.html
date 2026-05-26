@@ -1,0 +1,1374 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eagle Enterprise — Attendance</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c3557'/><text x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='38' font-family='serif'>🦅</text></svg>">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Nunito',system-ui,sans-serif;background:#eef2f7;min-height:100vh}
+input,select,button{font-family:inherit}
+input:focus,select:focus{outline:2px solid #D97757;border-color:#D97757}
+::-webkit-scrollbar{height:5px;width:5px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:translateX(0)}}
+.flash{animation:fadeIn .2s ease}
+.slide{animation:slideIn .2s ease}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+const {useState,useEffect,useMemo,useRef}=React;
+const K_EMP="eagle_att_emp_v2",K_ATT="eagle_att_data_v2",K_OB="eagle_att_ob_v3",K_SH="eagle_att_sh_v3",K_LOG="eagle_att_log_v1";
+const PIN_LS="eagle_pin_v1";
+const SPIN_LS="eagle_spin_v1"; // Settings PIN - separate
+const GS_URL_LS="eagle_gs_url_v1";
+let _pin=localStorage.getItem(PIN_LS)||'8460';
+let _spin=localStorage.getItem(SPIN_LS)||''; // empty = not set yet
+const setPinStored=(p)=>{_pin=p;localStorage.setItem(PIN_LS,p)};
+const setSpinStored=(p)=>{_spin=p;localStorage.setItem(SPIN_LS,p)};
+
+// ── Google Sheets sync layer ────────────────────────────────
+let _gsUrl=localStorage.getItem(GS_URL_LS)||'';
+const setGsUrl=(url)=>{_gsUrl=url;localStorage.setItem(GS_URL_LS,url)};
+
+const gsWrite=async(k,val)=>{
+  if(!_gsUrl)return;
+  try{
+    fetch(_gsUrl,{
+      method:'POST',mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'set',key:k,value:val})
+    });
+  }catch{}
+};
+const gsRead=async(k)=>{
+  if(!_gsUrl)return null;
+  try{
+    const r=await fetch(`${_gsUrl}?action=get&key=${encodeURIComponent(k)}`);
+    const d=await r.json();
+    return d.value||null;
+  }catch{return null}
+};
+const gsReadAll=async()=>{
+  if(!_gsUrl)return null;
+  try{
+    const r=await fetch(`${_gsUrl}?action=all`);
+    return await r.json();
+  }catch{return null}
+};
+
+// ── Primary storage (window.storage) + background GS sync ──
+const stSave=async(k,d)=>{
+  const str=JSON.stringify(d);
+  try{await window.storage.set(k,str)}catch{}
+  gsWrite(k,str); // background sync — no await
+};
+const stLoad=async(k,fb)=>{
+  // Try local first (fast)
+  try{const r=await window.storage.get(k);if(r)return JSON.parse(r.value)}catch{}
+  // Fallback: Google Sheets (if local cleared)
+  const gsVal=await gsRead(k);
+  if(gsVal){
+    try{await window.storage.set(k,gsVal)}catch{}
+    return JSON.parse(gsVal);
+  }
+  return fb;
+};
+
+const DEF_EMPS=[
+  {id:"e1",name:"DHRUV",salary:37000,lp:0,ep:0,mobile:"9377556776"},
+  {id:"e2",name:"JAYESH",salary:20000,lp:0,ep:0,mobile:"9879213327"},
+  {id:"e3",name:"HIREN",salary:35000,lp:0,ep:0,mobile:"6260539067"},
+  {id:"e4",name:"MANAV",salary:29000,lp:0,ep:0,mobile:"7698247072"},
+  {id:"e5",name:"SIDDHARTH",salary:16000,lp:0,ep:0,mobile:"8511367921"},
+  {id:"e6",name:"PARTH",salary:24000,lp:0,ep:0,mobile:"8320000109"},
+  {id:"e7",name:"JASIM",salary:17000,lp:0,ep:0,mobile:"9054338145"},
+  {id:"e8",name:"NANU",salary:26500,lp:0,ep:0,mobile:"7623820814"},
+  {id:"e9",name:"ANSAR",salary:18500,lp:0,ep:0,mobile:"7907716397"},
+  {id:"e10",name:"LALJIKAKA",salary:13000,lp:0,ep:0,mobile:"9998653138"},
+  {id:"e11",name:"PANKAJ",salary:14000,lp:0,ep:0,mobile:"9518988498"},
+  {id:"e12",name:"SALMAN",salary:18500,lp:0,ep:0,mobile:"7302587554"},
+  {id:"e13",name:"MIHIR",salary:12000,lp:0,ep:0,mobile:"9173326982"},
+  {id:"e14",name:"VISHAL",salary:12000,lp:0,ep:0,mobile:"9327929534"},
+  {id:"e15",name:"KRUPALI",salary:10000,lp:0,ep:0,mobile:""},
+  {id:"e16",name:"DISHA",salary:10000,lp:0,ep:0,mobile:""},
+  {id:"e17",name:"SMIT",salary:17000,lp:0,ep:0,mobile:""},
+];
+
+const NAVY="#1c3557",ORANGE="#D97757",GREEN="#22c55e",RED="#ef4444",AMBER="#f59e0b";
+const todayStr=()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`};
+const daysInMonth=(y,m)=>new Date(y,m,0).getDate();
+const addDays=(ds,n)=>{const[y,m,d]=ds.split('-').map(Number);const dt=new Date(y,m-1,d);dt.setDate(dt.getDate()+n);return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`};
+const shiftMonth=(ym,n)=>{const[y,m]=ym.split('-').map(Number);const dt=new Date(y,m-1+n,1);return`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`};
+const fmtFull=(ds)=>{const[y,m,d]=ds.split('-').map(Number);return new Date(y,m-1,d).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})};
+const fmtMonthLabel=(ym)=>{const[y,m]=ym.split('-').map(Number);return new Date(y,m-1,1).toLocaleDateString('en-IN',{month:'long',year:'numeric'})};
+const DOW='SMTWTFS';
+
+const card={background:'#fff',borderRadius:12,boxShadow:'0 1px 5px rgba(0,0,0,.09)'};
+const inp={padding:'7px 10px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',color:'#374151'};
+const btn=(bg,fg='#fff',p='7px 16px')=>({padding:p,borderRadius:8,border:'none',cursor:'pointer',fontWeight:700,fontSize:13,background:bg,color:fg,fontFamily:'inherit'});
+const thS={padding:'10px 14px',fontSize:12,fontWeight:700,letterSpacing:.4,textAlign:'left'};
+const tdS={padding:'9px 14px',fontSize:14};
+
+function App(){
+  // ── PIN Auth ──────────────────────────────────────────────
+  const[authed,setAuthed]=useState(()=>sessionStorage.getItem('eagle_authed')==='1');
+  const[pinInput,setPinInput]=useState('');
+  const[pinErr,setPinErr]=useState(false);
+  const[showSettings,setShowSettings]=useState(false);
+  const[settingsPinPrompt,setSettingsPinPrompt]=useState(false); // show PIN before settings
+  const[settingsPinInput,setSettingsPinInput]=useState('');
+  const[settingsPinErr,setSettingsPinErr]=useState(false);
+  const[gsUrlInput,setGsUrlInput]=useState(_gsUrl);
+  const[syncStatus,setSyncStatus]=useState('');
+  const[newPin1,setNewPin1]=useState('');
+  const[newPin2,setNewPin2]=useState('');
+  const[pinChangeMsg,setPinChangeMsg]=useState('');
+  const[newSpin1,setNewSpin1]=useState('');
+  const[newSpin2,setNewSpin2]=useState('');
+  const[spinChangeMsg,setSpinChangeMsg]=useState('');
+
+  const tryPin=(val)=>{
+    if(val===_pin){sessionStorage.setItem('eagle_authed','1');setAuthed(true);}
+    else{setPinErr(true);setPinInput('');setTimeout(()=>setPinErr(false),1200);}
+  };
+  const changePin=()=>{
+    if(newPin1.length<4){setPinChangeMsg('❌ Min 4 digits joiye');return;}
+    if(newPin1!==newPin2){setPinChangeMsg('❌ PIN match nathi karta');return;}
+    setPinStored(newPin1);setNewPin1('');setNewPin2('');
+    setPinChangeMsg('✓ App PIN changed!');setTimeout(()=>setPinChangeMsg(''),2500);
+  };
+  const changeSpin=()=>{
+    if(newSpin1.length<4){setSpinChangeMsg('❌ Min 4 digits joiye');return;}
+    if(newSpin1!==newSpin2){setSpinChangeMsg('❌ PIN match nathi karta');return;}
+    setSpinStored(newSpin1);setNewSpin1('');setNewSpin2('');
+    setSpinChangeMsg('✓ Settings PIN changed!');setTimeout(()=>setSpinChangeMsg(''),2500);
+  };
+  const openSettings=()=>{
+    if(!_spin){setShowSettings(true);setGsUrlInput(_gsUrl);} // no settings PIN set yet
+    else{setSettingsPinPrompt(true);setSettingsPinInput('');}
+  };
+  const trySettingsPin=(val)=>{
+    if(val===_spin){setSettingsPinPrompt(false);setShowSettings(true);setGsUrlInput(_gsUrl);}
+    else{setSettingsPinErr(true);setSettingsPinInput('');setTimeout(()=>setSettingsPinErr(false),1200);}
+  };
+  const trySalaryPin=(val)=>{
+    const check=_spin||_pin;
+    if(val===check){setSalaryPinPrompt(false);setShowSalary(true);setSalaryPinInput('');}
+    else{setSalaryPinErr(true);setSalaryPinInput('');setTimeout(()=>setSalaryPinErr(false),1200);}
+  };
+
+  // ── App State ─────────────────────────────────────────────
+  const[tab,setTab]=useState('att');
+  const[emps,setEmps]=useState([]);
+  const[att,setAtt]=useState({});
+  const[date,setDate]=useState(todayStr());
+  const[ready,setReady]=useState(false);
+  const[flash,setFlash]=useState('');
+  const[editId,setEditId]=useState(null);
+  const[editRow,setEditRow]=useState({});
+  const[newRow,setNewRow]=useState({name:'',salary:'',lp:'',ep:'',mobile:''});
+  const[sumYM,setSumYM]=useState(todayStr().slice(0,7));
+  const[calView,setCalView]=useState(false);
+  const[salEmp,setSalEmp]=useState('');
+  const[salYM,setSalYM]=useState(todayStr().slice(0,7));
+  const[salPanel,setSalPanel]=useState(1);
+  const[showSalary,setShowSalary]=useState(false); // hide by default
+  const[salaryPinPrompt,setSalaryPinPrompt]=useState(false);
+  const[salaryPinInput,setSalaryPinInput]=useState('');
+  const[salaryPinErr,setSalaryPinErr]=useState(false);
+  const[histYM,setHistYM]=useState(null);
+  const[histEmp,setHistEmp]=useState(null);
+  const[ob,setOb]=useState({});
+  const[salHist,setSalHist]=useState({});
+  const[auditLog,setAuditLog]=useState([]); // [{ts,type,empId,empName,detail,ym,date}]
+  // Log tab filters
+  const[logFilter,setLogFilter]=useState({type:'',empId:'',ym:''});
+
+  useEffect(()=>{
+    Promise.all([stLoad(K_EMP,DEF_EMPS),stLoad(K_ATT,{}),stLoad(K_OB,{}),stLoad(K_SH,{}),stLoad(K_LOG,[])]).then(([e,a,o,sh,lg])=>{setEmps(e);setAtt(a);setOb(o);setSalHist(sh);setAuditLog(lg);setReady(true)});
+  },[]);
+
+  const showFlash=(msg)=>{setFlash(msg);setTimeout(()=>setFlash(''),1800)};
+
+  // ── Audit log ──────────────────────────────────────────────
+  const logAudit=(entries,currentLog)=>{
+    const ts=new Date().toISOString();
+    const newEntries=entries.map(e=>({...e,ts}));
+    const updated=[...newEntries,...(currentLog||auditLog)].slice(0,800);
+    setAuditLog(updated);
+    stSave(K_LOG,updated);
+    return updated;
+  };
+  const saveOb=(o)=>{setOb(o);stSave(K_OB,o)};
+  const saveEmps=(list,logEntries)=>{
+    setEmps(list);stSave(K_EMP,list);
+    if(logEntries&&logEntries.length)logAudit(logEntries);
+    showFlash('✓ Staff updated');
+  };
+  const saveAtt=(a,logEntries)=>{
+    setAtt(a);stSave(K_ATT,a);
+    if(logEntries&&logEntries.length)logAudit(logEntries);
+    showFlash('✓ Saved');
+  };
+  // Recursive carry-forward: Old Bal[N] = Baaki To Pay[N-1] = Net[N-1] - OldBal[N-1]
+  const getOb=(eid,ym,depth=0)=>{
+    const key=`${eid}:${ym}`;
+    if(key in ob)return ob[key]; // user manually set — stop recursion
+    if(depth>=24)return 0; // max 24 months back
+    const prevYM=shiftMonth(ym,-1);
+    const prevSal=getSal(eid,prevYM);
+    if(!prevSal)return 0;
+    const prevOb=getOb(eid,prevYM,depth+1); // recursive — get prev month's old bal
+    const prevToPay=Math.round(prevSal.net-prevOb);
+    return prevToPay>0?prevToPay:0;
+  };
+  const setObVal=(eid,ym,v)=>{
+    const key=`${eid}:${ym}`;
+    const oldVal=ob[key]||0;
+    const newVal=v===''?0:parseFloat(v)||0;
+    const nxt={...ob,[key]:newVal};
+    saveOb(nxt);
+    const emp=emps.find(e=>e.id===eid);
+    logAudit([{type:'OB',empId:eid,empName:emp?.name||eid,ym,detail:`Old Balance: ₹${oldVal} → ₹${newVal}`}]);
+  };
+  const saveSH=(sh)=>{setSalHist(sh);stSave(K_SH,sh)};
+  const addSalHist=(eid,ym,salary,lp,ep)=>{
+    const existing=salHist[eid]||[];
+    // Jo effFrom thi pehla koi entry nathi to emp ni current (old) salary thi baseline banavo
+    // Jethee past months correct old salary show kare
+    const hasEarlier=existing.some(h=>h.ym<ym);
+    let base=existing.filter(h=>h.ym!==ym); // same month ni existing entry hatavo
+    if(!hasEarlier){
+      const emp=emps.find(e=>e.id===eid);
+      if(emp){
+        // emp.salary = abhi ni salary (save PEHLA ni, jo change thi different hoy)
+        // '2020-01' = virtually "beginning of time"
+        base=[{ym:'2020-01',salary:emp.salary,lp:emp.lp||0,ep:emp.ep||0},...base];
+      }
+    }
+    const updated=[...base,{ym,salary,lp,ep}].sort((a,b)=>a.ym.localeCompare(b.ym));
+    saveSH({...salHist,[eid]:updated});
+    const empName=emps.find(e=>e.id===eid)?.name||eid;
+    const prev=getEmpData(eid,ym);
+    logAudit([{type:'SAL',empId:eid,empName,ym,detail:`Salary: ₹${prev.salary}→₹${salary} | Late:₹${prev.lp}→₹${lp} | Early:₹${prev.ep}→₹${ep} | From: ${ym}`}]);
+  };
+  // Get salary/lp/ep applicable for a given month — history based
+  const getEmpData=(eid,ym)=>{
+    const emp=emps.find(e=>e.id===eid);
+    if(!emp)return{salary:0,lp:0,ep:0};
+    const hist=(salHist[eid]||[]).filter(h=>h.ym<=ym);
+    if(hist.length===0)return{salary:emp.salary,lp:emp.lp||0,ep:emp.ep||0};
+    const h=hist[hist.length-1];
+    return{salary:h.salary,lp:h.lp||0,ep:h.ep||0};
+  };
+  // Print a div by id in new window (A5)
+  const printDiv=(id,title,orient='portrait')=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    const w=window.open('','_blank','width=900,height=700');
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Nunito',sans-serif;background:#fff;padding:4mm}
+    table{width:100%;border-collapse:collapse}th,td{padding:3px 5px;font-size:10px}
+    @page{size:A5 ${orient};margin:5mm}@media print{body{padding:0}}</style>
+    </head><body>${el.innerHTML}</body></html>`);
+    w.document.close();
+    setTimeout(()=>{w.print();w.close();},700);
+  };
+
+  const exportMahinoExcel=(ym)=>{
+    const[y,m]=ym.split('-').map(Number);
+    const monthLabel=new Date(y,m-1,1).toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+    const wd=daysInMonth(y,m);
+    // Header row
+    const headers=['#','Employee','Basic Salary','Per Day','Present','Absent','Half Day','Late','Early Going','UPAD (Deducted)','Jama (Credit)','Gross Salary','Est. Net Salary','Old Balance','To Pay'];
+    const rows=activeEmps.map((e,i)=>{
+      const sal=getSal(e.id,ym);
+      if(!sal)return null;
+      const oldBal=getOb(e.id,ym);
+      const toPay=Math.round(sal.net-oldBal);
+      return[
+        i+1, e.name, sal.basic, +sal.perDay.toFixed(2),
+        sal.P, sal.A, sal.H, sal.L, sal.E,
+        sal.U>0?-sal.U:0, sal.J>0?sal.J:0,
+        +sal.gross.toFixed(2), Math.round(sal.net),
+        oldBal, toPay
+      ];
+    }).filter(Boolean);
+    // Total row
+    let totNet=0,totOb=0,totPay=0;
+    rows.forEach(r=>{totNet+=r[12];totOb+=r[13];totPay+=r[14];});
+    const totalRow=['','TOTAL','','','','','','','','','','',totNet,totOb,totPay];
+
+    const wsData=[
+      [`EAGLE ENTERPRISE — ${monthLabel} Salary Summary`],
+      [`Working Days in Month: ${wd}`],
+      [],
+      headers,
+      ...rows,
+      [],
+      totalRow
+    ];
+    const ws=XLSX.utils.aoa_to_sheet(wsData);
+    // Column widths
+    ws['!cols']=[{wch:4},{wch:14},{wch:13},{wch:10},{wch:8},{wch:8},{wch:9},{wch:6},{wch:12},{wch:16},{wch:14},{wch:13},{wch:14},{wch:13},{wch:10}];
+    // Merge title cell
+    ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:14}}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,monthLabel.replace(/[\/\\?*\[\]]/g,''));
+    XLSX.writeFile(wb,`Eagle_Salary_${ym}.xlsx`);
+  };
+
+  const activeEmps=emps.filter(e=>!e.archived);
+  const archivedEmps=emps.filter(e=>e.archived);
+  const archiveEmp=(eid)=>{const e=emps.find(x=>x.id===eid);saveEmps(emps.map(x=>x.id===eid?{...x,archived:true}:x),[{type:'STAFF',empId:eid,empName:e?.name||eid,detail:'Archived'}]);};
+  const restoreEmp=(eid)=>{const e=emps.find(x=>x.id===eid);saveEmps(emps.map(x=>x.id===eid?{...x,archived:false}:x),[{type:'STAFF',empId:eid,empName:e?.name||eid,detail:'Restored from archive'}]);};
+  const permDelete=(eid,name)=>{if(window.confirm(`PERMANENT DELETE: ${name}?\n\nAll attendance history will remain but staff record will be gone. This cannot be undone.`)){saveEmps(emps.filter(x=>x.id!==eid),[{type:'STAFF',empId:eid,empName:name,detail:'Permanently deleted'}]);}};
+
+  const empDay=(d,eid)=>att[d]&&att[d][eid]?att[d][eid]:{status:'',upad:'',late:false,early:false,remarks:''};
+  const setStatus=(eid,st)=>{
+    const cur=empDay(date,eid);
+    const oldSt=cur.status||'—';
+    const newSt=cur.status===st?'':st;
+    const emp=emps.find(e=>e.id===eid);
+    saveAtt({...att,[date]:{...(att[date]||{}),[eid]:{...cur,status:newSt}}},[
+      {type:'ATT',empId:eid,empName:emp?.name||eid,date,ym:date.slice(0,7),detail:`Status: ${oldSt} → ${newSt||'—'}`}
+    ]);
+  };
+  const setF=(eid,f,v)=>{
+    const cur=empDay(date,eid);
+    const oldV=cur[f];
+    const emp=emps.find(e=>e.id===eid);
+    const fLabel={'late':'Late Arrival','early':'Early Going','upad':'UPAD/Jama','remarks':'Remarks'};
+    const logEntry=(f==='upad'||f==='late'||f==='early'||f==='remarks')
+      ?[{type:f==='upad'?'UPAD':f==='remarks'?'ATT':'ATT',empId:eid,empName:emp?.name||eid,date,ym:date.slice(0,7),
+         detail:`${fLabel[f]||f}: ${oldV??'—'} → ${v??'—'}`}]
+      :[];
+    saveAtt({...att,[date]:{...(att[date]||{}),[eid]:{...cur,[f]:v}}},logEntry);
+  };
+  const markAll=()=>{const day={};activeEmps.forEach(e=>{day[e.id]={...empDay(date,e.id),status:'P'}});saveAtt({...att,[date]:day})};
+
+  const getSum=(eid,ym)=>{
+    const[y,m]=ym.split('-').map(Number);
+    let P=0,A=0,H=0,L=0,E=0,U=0,J=0;
+    for(let d=1;d<=daysInMonth(y,m);d++){
+      const ed=att[`${ym}-${String(d).padStart(2,'0')}`]?.[eid];
+      if(!ed||!ed.status){A++;continue;} // blank = absent
+      if(ed.status==='P')P++;else if(ed.status==='A')A++;else if(ed.status==='H')H++;
+      if(ed.late)L++;if(ed.early)E++;
+      if(ed.upad){const v=parseFloat(ed.upad)||0;if(v>0)U+=v;else if(v<0)J+=Math.abs(v);}
+    }
+    return{P,A,H,L,E,U,J};
+  };
+
+  const getSal=(eid,ym)=>{
+    const emp=emps.find(e=>e.id===eid);if(!emp)return null;
+    const s=getSum(eid,ym);
+    const{salary,lp,ep}=getEmpData(eid,ym);
+    const[y,m]=ym.split('-').map(Number);
+    const wd=daysInMonth(y,m);
+    const perDay=salary/wd;
+    const absD=(s.A+s.H*.5)*perDay,lD=s.L*lp,eD=s.E*ep;
+    const gross=salary-absD-lD-eD;
+    return{...s,perDay,absD,lD,eD,gross,net:gross-s.U+s.J,basic:salary,lp,ep,wd};
+  };
+
+  // Get all months that have any data
+  const allMonths=useMemo(()=>{
+    const months=new Set();
+    Object.keys(att).forEach(ds=>months.add(ds.slice(0,7)));
+    const arr=Array.from(months).sort().reverse();
+    return arr;
+  },[att]);
+
+  // ── Settings PIN Prompt ───────────────────────────────────
+  if(settingsPinPrompt)return React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}},
+    React.createElement('div',{style:{background:'#fff',borderRadius:16,padding:'32px 28px',textAlign:'center',width:280,boxShadow:'0 20px 60px rgba(0,0,0,.4)'}},
+      React.createElement('div',{style:{fontSize:24,marginBottom:8}},'⚙️'),
+      React.createElement('div',{style:{fontWeight:900,fontSize:16,color:NAVY,marginBottom:4}},'Settings PIN'),
+      React.createElement('div',{style:{fontSize:12,color:'#94a3b8',marginBottom:20}},'Settings kholva PIN enter karo'),
+      React.createElement('input',{
+        type:'password',inputMode:'numeric',maxLength:10,
+        value:settingsPinInput,
+        onChange:ev=>{setSettingsPinInput(ev.target.value);setSettingsPinErr(false);},
+        onKeyDown:ev=>{if(ev.key==='Enter')trySettingsPin(settingsPinInput);},
+        placeholder:'Settings PIN',autoFocus:true,
+        style:{width:'100%',padding:'10px 14px',borderRadius:10,border:`2px solid ${settingsPinErr?'#ef4444':'#e2e8f0'}`,fontSize:18,textAlign:'center',letterSpacing:6,outline:'none',marginBottom:10,fontFamily:'inherit',background:settingsPinErr?'#fff5f5':'#fff'}
+      }),
+      settingsPinErr&&React.createElement('div',{style:{color:'#ef4444',fontSize:12,marginBottom:8,fontWeight:700}},'Incorrect PIN'),
+      React.createElement('div',{style:{display:'flex',gap:8}},
+        React.createElement('button',{onClick:()=>setSettingsPinPrompt(false),style:{...btn('#f1f5f9','#374151','10px 0'),flex:1}},'Cancel'),
+        React.createElement('button',{onClick:()=>trySettingsPin(settingsPinInput),style:{...btn(ORANGE,'#fff','10px 0'),flex:1}},'Unlock')
+      )
+    )
+  );
+
+  // ── Salary Unlock PIN Prompt (inline modal) ───────────────
+  const salaryPinModal=salaryPinPrompt&&React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}},
+    React.createElement('div',{style:{background:'#fff',borderRadius:16,padding:'28px 26px',textAlign:'center',width:260,boxShadow:'0 20px 60px rgba(0,0,0,.4)'}},
+      React.createElement('div',{style:{fontSize:22,marginBottom:6}},'🔒'),
+      React.createElement('div',{style:{fontWeight:900,fontSize:15,color:'#1c3557',marginBottom:4}},'Salary Unlock'),
+      React.createElement('div',{style:{fontSize:11,color:'#94a3b8',marginBottom:16}},'Settings PIN enter karo'),
+      React.createElement('input',{
+        type:'password',inputMode:'numeric',maxLength:10,
+        value:salaryPinInput,autoFocus:true,
+        onChange:ev=>{setSalaryPinInput(ev.target.value);setSalaryPinErr(false);},
+        onKeyDown:ev=>{if(ev.key==='Enter')trySalaryPin(salaryPinInput);},
+        placeholder:'PIN',
+        style:{width:'100%',padding:'9px 12px',borderRadius:10,border:`2px solid ${salaryPinErr?'#ef4444':'#e2e8f0'}`,fontSize:20,textAlign:'center',letterSpacing:6,outline:'none',marginBottom:8,fontFamily:'inherit',background:salaryPinErr?'#fff5f5':'#fff'}
+      }),
+      salaryPinErr&&React.createElement('div',{style:{color:'#ef4444',fontSize:11,marginBottom:6,fontWeight:700}},'Incorrect PIN'),
+      React.createElement('div',{style:{display:'flex',gap:8}},
+        React.createElement('button',{onClick:()=>{setSalaryPinPrompt(false);setSalaryPinInput('');},style:{...btn('#f1f5f9','#374151','9px 0'),flex:1,fontSize:13}},'Cancel'),
+        React.createElement('button',{onClick:()=>trySalaryPin(salaryPinInput),style:{...btn(ORANGE,'#fff','9px 0'),flex:1,fontSize:13}},'Unlock')
+      )
+    )
+  );
+
+  // ── PIN Screen ────────────────────────────────────────────
+  if(!authed)return React.createElement('div',{style:{display:'flex',height:'100vh',alignItems:'center',justifyContent:'center',background:'#1c3557'}},
+    React.createElement('div',{style:{background:'#fff',borderRadius:20,padding:'40px 36px',textAlign:'center',width:300,boxShadow:'0 20px 60px rgba(0,0,0,.3)'}},
+      React.createElement('div',{style:{fontSize:32,marginBottom:8}},'🔐'),
+      React.createElement('div',{style:{fontWeight:900,fontSize:20,color:'#1c3557',marginBottom:4}},'EAGLE ENTERPRISE'),
+      React.createElement('div',{style:{fontSize:13,color:'#94a3b8',marginBottom:24}},'Attendance System'),
+      React.createElement('input',{
+        type:'password',inputMode:'numeric',maxLength:10,
+        value:pinInput,
+        onChange:ev=>{setPinInput(ev.target.value);setPinErr(false);},
+        onKeyDown:ev=>{if(ev.key==='Enter')tryPin(pinInput);},
+        placeholder:'Enter PIN',
+        autoFocus:true,
+        style:{width:'100%',padding:'12px 16px',borderRadius:10,border:`2px solid ${pinErr?'#ef4444':'#e2e8f0'}`,fontSize:18,textAlign:'center',letterSpacing:6,outline:'none',marginBottom:12,fontFamily:'inherit',background:pinErr?'#fff5f5':'#fff',transition:'all .2s'}
+      }),
+      pinErr&&React.createElement('div',{style:{color:'#ef4444',fontSize:13,marginBottom:8,fontWeight:700}},'Incorrect PIN'),
+      React.createElement('button',{
+        onClick:()=>tryPin(pinInput),
+        style:{...btn('#D97757','#fff','12px 0'),width:'100%',fontSize:15,borderRadius:10}
+      },'Unlock →')
+    )
+  );
+
+  // ── Settings Modal ────────────────────────────────────────
+  const settingsModal=showSettings&&React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}},
+    React.createElement('div',{style:{background:'#fff',borderRadius:16,padding:'28px 28px',maxWidth:540,width:'100%',maxHeight:'90vh',overflowY:'auto'}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
+        React.createElement('div',{style:{fontWeight:900,fontSize:17,color:NAVY}},'⚙️ Settings — Google Sheets Sync'),
+        React.createElement('button',{onClick:()=>setShowSettings(false),style:{...btn('#f1f5f9','#374151','6px 12px')}},'✕')
+      ),
+      // Step-by-step instructions
+      React.createElement('div',{style:{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:10,padding:'14px 16px',marginBottom:16,fontSize:13}},
+        React.createElement('div',{style:{fontWeight:900,color:'#166534',marginBottom:8}},'📋 Setup Steps (Ek vaar j karvanu):'),
+        ...['1. drive.google.com → New → Google Sheets → Name: Eagle_Attendance',
+           '2. Extensions → Apps Script → purano code delete karo',
+           '3. Neeche aapelo code copy karo ane paste karo',
+           '4. Deploy → New Deployment → Web App → Execute as: Me → Access: Anyone → Deploy',
+           '5. "Web app URL" copy karo ane neeche paste karo'
+        ].map((s,i)=>React.createElement('div',{key:i,style:{marginBottom:4,color:'#166534'}},s))
+      ),
+      // Apps Script code
+      React.createElement('div',{style:{marginBottom:16}},
+        React.createElement('div',{style:{fontWeight:700,color:NAVY,fontSize:12,marginBottom:6}},'APPS SCRIPT CODE (Copy karo):'),
+        React.createElement('textarea',{
+          readOnly:true,
+          value:`function doGet(e){
+  var p=e.parameter,ss=SpreadsheetApp.getActiveSpreadsheet();
+  var sh=ss.getSheetByName('EagleData')||ss.insertSheet('EagleData');
+  var out=ContentService.createTextOutput();
+  out.setMimeType(ContentService.MimeType.JSON);
+  if(p.action==='get'){
+    var d=sh.getDataRange().getValues();
+    for(var i=1;i<d.length;i++){if(d[i][0]===p.key){out.setContent(JSON.stringify({value:d[i][1]}));return out;}}
+    out.setContent(JSON.stringify({value:null}));
+  } else if(p.action==='all'){
+    var d=sh.getDataRange().getValues(),r={};
+    d.slice(1).forEach(function(row){if(row[0])r[row[0]]=row[1];});
+    out.setContent(JSON.stringify(r));
+  } else {out.setContent(JSON.stringify({ok:1}));}
+  return out;
+}
+function doPost(e){
+  var b=JSON.parse(e.postData.contents);
+  var ss=SpreadsheetApp.getActiveSpreadsheet();
+  var sh=ss.getSheetByName('EagleData')||ss.insertSheet('EagleData');
+  if(sh.getLastRow()===0)sh.appendRow(['Key','Value','Updated']);
+  var d=sh.getDataRange().getValues(),found=false;
+  for(var i=1;i<d.length;i++){
+    if(d[i][0]===b.key){sh.getRange(i+1,2).setValue(b.value);sh.getRange(i+1,3).setValue(new Date().toString());found=true;break;}
+  }
+  if(!found)sh.appendRow([b.key,b.value,new Date().toString()]);
+  var out=ContentService.createTextOutput(JSON.stringify({ok:1}));
+  out.setMimeType(ContentService.MimeType.JSON);
+  return out;
+}`,
+          onClick:ev=>ev.target.select(),
+          style:{width:'100%',height:160,fontSize:10,fontFamily:'monospace',padding:8,borderRadius:8,border:'1px solid #e2e8f0',background:'#f8fafc',resize:'none',cursor:'text'}
+        })
+      ),
+      // URL input
+      React.createElement('div',{style:{marginBottom:16}},
+        React.createElement('div',{style:{fontWeight:700,color:NAVY,fontSize:12,marginBottom:6}},'Web App URL:'),
+        React.createElement('input',{
+          type:'text',value:gsUrlInput,
+          onChange:ev=>setGsUrlInput(ev.target.value),
+          placeholder:'https://script.google.com/macros/s/...',
+          style:{...inp,width:'100%',fontSize:12}
+        })
+      ),
+      // Google Sheets buttons
+      React.createElement('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}},
+        React.createElement('button',{onClick:()=>{setGsUrl(gsUrlInput);showFlash('✓ Google Sheets URL saved!');},style:btn(GREEN,'#fff','9px 20px')},'✓ Save URL'),
+        React.createElement('button',{
+          onClick:async()=>{
+            if(!gsUrlInput){showFlash('⚠️ Pehla URL enter karo');return;}
+            setGsUrl(gsUrlInput);
+            setSyncStatus('syncing');
+            try{
+              const all=await gsReadAll();
+              if(!all||Object.keys(all).length===0){setSyncStatus('err');showFlash('❌ Google Sheets thi data na maliyu — pehla koi data save karelo hovo joiye');return;}
+              for(const k of [K_EMP,K_ATT,K_OB,K_SH]){
+                if(all[k])try{await window.storage.set(k,all[k])}catch{}
+              }
+              const[e,a,o,sh]=await Promise.all([stLoad(K_EMP,DEF_EMPS),stLoad(K_ATT,{}),stLoad(K_OB,{}),stLoad(K_SH,{})]);
+              setEmps(e);setAtt(a);setOb(o);setSalHist(sh);
+              setSyncStatus('ok');showFlash('✓ Data restored from Google Sheets!');
+              setTimeout(()=>setSyncStatus(''),3000);
+              setShowSettings(false);
+            }catch(err){setSyncStatus('err');showFlash('❌ Restore failed: '+err.message);}
+          },
+          style:btn('#0369a1','#fff','9px 20px')
+        },'☁️ Restore from Sheets'),
+        gsUrlInput&&React.createElement('button',{onClick:()=>{setGsUrl('');setGsUrlInput('');showFlash('✓ URL removed');},style:btn('#fee2e2','#dc2626','9px 16px')},'🗑 Remove URL')
+      ),
+      // Divider
+      React.createElement('hr',{style:{border:'none',borderTop:'1px solid #e2e8f0',margin:'4px 0 16px'}}),
+      // PIN Change section
+      React.createElement('div',{style:{fontWeight:900,color:NAVY,fontSize:14,marginBottom:12}},'🔐 PIN Change'),
+      React.createElement('div',{style:{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:8}},
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'New PIN'),
+          React.createElement('input',{
+            type:'password',inputMode:'numeric',maxLength:10,
+            value:newPin1,onChange:ev=>setNewPin1(ev.target.value.replace(/\D/g,'')),
+            placeholder:'New PIN',
+            style:{...inp,width:120,letterSpacing:4,textAlign:'center'}
+          })
+        ),
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'Confirm PIN'),
+          React.createElement('input',{
+            type:'password',inputMode:'numeric',maxLength:10,
+            value:newPin2,onChange:ev=>setNewPin2(ev.target.value.replace(/\D/g,'')),
+            placeholder:'Repeat PIN',
+            style:{...inp,width:120,letterSpacing:4,textAlign:'center',borderColor:newPin2&&newPin1!==newPin2?RED:'#e2e8f0'}
+          })
+        ),
+        React.createElement('button',{onClick:changePin,style:btn(ORANGE,'#fff','9px 18px')},'Change PIN')
+      ),
+      pinChangeMsg&&React.createElement('div',{style:{fontSize:13,fontWeight:700,color:pinChangeMsg.startsWith('✓')?GREEN:RED,marginBottom:8}},pinChangeMsg),
+      React.createElement('div',{style:{fontSize:11,color:'#94a3b8'}},'Current PIN browser ma save che — app bookmark kari rakho.'),
+      React.createElement('hr',{style:{border:'none',borderTop:'1px solid #e2e8f0',margin:'16px 0'}}),
+      // Settings PIN section
+      React.createElement('div',{style:{fontWeight:900,color:NAVY,fontSize:14,marginBottom:12}},'⚙️ Settings PIN (Alag PIN)'),
+      React.createElement('div',{style:{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#92400e',marginBottom:12}},
+        !_spin?'⚠️ Settings PIN set nathi — Settings freely khule che. Neeche set karo.':
+        '✓ Settings PIN set che — Settings kholva eni j jarur padse.'
+      ),
+      React.createElement('div',{style:{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:8}},
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'New Settings PIN'),
+          React.createElement('input',{type:'password',inputMode:'numeric',maxLength:10,value:newSpin1,onChange:ev=>setNewSpin1(ev.target.value.replace(/\D/g,'')),placeholder:'New PIN',style:{...inp,width:120,letterSpacing:4,textAlign:'center'}})
+        ),
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'Confirm'),
+          React.createElement('input',{type:'password',inputMode:'numeric',maxLength:10,value:newSpin2,onChange:ev=>setNewSpin2(ev.target.value.replace(/\D/g,'')),placeholder:'Repeat',style:{...inp,width:120,letterSpacing:4,textAlign:'center',borderColor:newSpin2&&newSpin1!==newSpin2?RED:'#e2e8f0'}})
+        ),
+        React.createElement('button',{onClick:changeSpin,style:btn('#7c3aed','#fff','9px 18px')},'Set Settings PIN')
+      ),
+      spinChangeMsg&&React.createElement('div',{style:{fontSize:13,fontWeight:700,color:spinChangeMsg.startsWith('✓')?GREEN:RED}},spinChangeMsg)
+    )
+  );
+
+  if(!ready)return React.createElement('div',{style:{display:'flex',height:'100vh',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:14,background:'#eef2f7'}},
+    React.createElement('div',{style:{width:44,height:44,border:`4px solid ${ORANGE}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin .8s linear infinite'}}),
+    React.createElement('div',{style:{color:'#64748b',fontWeight:700,fontSize:15}},'Loading...')
+  );
+
+  // ── Attendance ─────────────────────────────────────────────
+  function renderAtt(){
+    const dayData=att[date]||{};
+    const nMarked=activeEmps.filter(e=>dayData[e.id]&&dayData[e.id].status).length;
+    return React.createElement('div',null,
+      React.createElement('div',{style:{...card,padding:'12px 16px',display:'flex',alignItems:'center',gap:10,marginBottom:12}},
+        React.createElement('button',{onClick:()=>setDate(addDays(date,-1)),style:{width:36,height:36,border:'1px solid #e2e8f0',borderRadius:8,background:'#fff',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}},'‹'),
+        React.createElement('div',{style:{flex:1,textAlign:'center'}},
+          React.createElement('div',{style:{fontWeight:900,fontSize:16,color:NAVY}},fmtFull(date)),
+          React.createElement('div',{style:{fontSize:12,color:'#94a3b8',marginTop:2}},`${nMarked} / ${activeEmps.length} marked`)
+        ),
+        React.createElement('button',{onClick:()=>setDate(addDays(date,1)),style:{width:36,height:36,border:'1px solid #e2e8f0',borderRadius:8,background:'#fff',cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}},'›'),
+        React.createElement('button',{onClick:()=>setDate(todayStr()),style:btn(NAVY,'#fff','6px 14px')},'Today'),
+        React.createElement('button',{onClick:markAll,style:btn(GREEN,'#fff','6px 14px')},'All P ✓')
+      ),
+      React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:6}},
+        activeEmps.map(e=>{
+          const d=empDay(date,e.id);
+          const bc=d.status==='P'?GREEN:d.status==='A'?RED:d.status==='H'?AMBER:'#e2e8f0';
+          return React.createElement('div',{key:e.id,style:{...card,padding:'9px 14px',borderLeft:`4px solid ${bc}`,display:'flex',alignItems:'center',flexWrap:'wrap',gap:8}},
+            React.createElement('div',{style:{width:90,fontWeight:900,fontSize:13,color:NAVY,flexShrink:0}},e.name),
+            ...['P','A','H'].map(st=>React.createElement('button',{key:st,onClick:()=>setStatus(e.id,st),style:{width:32,height:28,borderRadius:6,border:'none',cursor:'pointer',fontWeight:900,fontSize:13,background:d.status===st?(st==='P'?GREEN:st==='A'?RED:AMBER):'#f1f5f9',color:d.status===st?'#fff':'#9ca3af',transform:d.status===st?'scale(1.08)':'scale(1)',transition:'all .12s'}},st)),
+            React.createElement('div',{style:{display:'flex',alignItems:'center',gap:3}},
+              React.createElement('span',{style:{fontSize:11,color:'#94a3b8',fontWeight:700}},'₹'),
+              React.createElement('input',{type:'number',value:d.upad||'',onChange:ev=>setF(e.id,'upad',ev.target.value),placeholder:'UPAD',style:{...inp,width:70,padding:'3px 7px',fontSize:12}})
+            ),
+            ...['late','early'].map(f=>React.createElement('label',{key:f,style:{display:'flex',alignItems:'center',gap:3,cursor:'pointer',fontSize:12,color:d[f]?AMBER:'#9ca3af',userSelect:'none',fontWeight:d[f]?700:400}},
+              React.createElement('input',{type:'checkbox',checked:!!d[f],onChange:ev=>setF(e.id,f,ev.target.checked),style:{accentColor:ORANGE}}),
+              f==='late'?'Late':'Early'
+            )),
+            React.createElement('input',{type:'text',value:d.remarks||'',onChange:ev=>setF(e.id,'remarks',ev.target.value),placeholder:'Remarks...',style:{...inp,flex:1,minWidth:80,padding:'3px 8px',fontSize:12}})
+          );
+        })
+      )
+    );
+  }
+
+  // ── Staff ──────────────────────────────────────────────────
+  function renderEmp(){
+    const empTable=(list,isArchived)=>React.createElement('div',{style:{...card,padding:0,overflow:'hidden',marginBottom:14}},
+      React.createElement('div',{style:{padding:'10px 16px',background:isArchived?'#64748b':NAVY,display:'flex',alignItems:'center',gap:10}},
+        React.createElement('span',{style:{color:'#fff',fontWeight:900,fontSize:13,letterSpacing:.5}},isArchived?`📦 ARCHIVED STAFF (${list.length})`:`✅ ACTIVE STAFF (${list.length})`),
+        isArchived&&React.createElement('span',{style:{fontSize:11,color:'rgba(255,255,255,.6)',fontWeight:600}},'History & Slip still accessible')
+      ),
+      React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        React.createElement('thead',null,React.createElement('tr',{style:{background:isArchived?'#94a3b8':NAVY}},
+          ...['#','Name',...(showSalary?['Basic Salary','Late Pen.','Early Pen.']:[]),'Mobile',''].map(h=>React.createElement('th',{key:h,style:{...thS,color:'#fff'}},h))
+        )),
+        React.createElement('tbody',null,list.map((e,i)=>editId===e.id?
+          React.createElement('tr',{key:e.id,style:{background:'#fffbf8'}},
+            React.createElement('td',{style:tdS},i+1),
+            ...['name','salary','lp','ep','mobile'].map((f,fi)=>React.createElement('td',{key:f,style:tdS},
+              React.createElement('input',{
+                type:fi===4?'tel':fi===0?'text':'number',
+                value:editRow[f]||'',
+                maxLength:fi===4?10:undefined,
+                onChange:ev=>{
+                  let val=ev.target.value;
+                  if(fi===4)val=val.replace(/\D/g,'').slice(0,10); // mobile: digits only, max 10
+                  setEditRow({...editRow,[f]:val});
+                },
+                style:{...inp,
+                  width:fi===0?110:fi===4?110:75,
+                  borderColor:fi===0&&editRow.name&&emps.some(x=>x.id!==e.id&&x.name===editRow.name.trim().toUpperCase())?RED:
+                              fi===4&&editRow.mobile&&editRow.mobile.length!==10?AMBER:ORANGE}
+              })
+            )),
+            React.createElement('td',{style:{...tdS,minWidth:220}},
+              React.createElement('div',{style:{fontSize:11,color:'#94a3b8',marginBottom:3,fontWeight:700}},'Effective From Month'),
+              React.createElement('input',{type:'month',value:editRow.effFrom||todayStr().slice(0,7),onChange:ev=>setEditRow({...editRow,effFrom:ev.target.value}),style:{...inp,fontSize:11,padding:'3px 7px',borderColor:ORANGE,marginBottom:5}}),
+              // Show existing salary history
+              (salHist[e.id]||[]).length>0&&React.createElement('div',{style:{fontSize:10,color:'#64748b',marginBottom:5,background:'#f8fafc',borderRadius:6,padding:'4px 8px'}},
+                React.createElement('div',{style:{fontWeight:700,color:'#475569',marginBottom:2}},'Salary History:'),
+                ...(salHist[e.id]||[]).map((h,hi)=>React.createElement('div',{key:hi,style:{color:'#64748b'}},
+                  `${h.ym==='2020-01'?'Start':h.ym}: ₹${h.salary.toLocaleString()}`
+                ))
+              ),
+              React.createElement('div',{style:{display:'flex',gap:4}},
+                React.createElement('button',{onClick:()=>{
+                  const nm=(editRow.name||'').trim().toUpperCase();
+                  if(!nm){showFlash('⚠️ Name khali na rakho');return;}
+                  if(emps.some(x=>x.id!==e.id&&x.name===nm)){showFlash('⚠️ '+nm+' naam already exists!');return;}
+                  if(editRow.mobile&&editRow.mobile.length!==10){showFlash('⚠️ Mobile 10 digits hova joiye');return;}
+                  const updated={...editRow,id:e.id,name:nm,salary:+editRow.salary,lp:+editRow.lp||0,ep:+editRow.ep||0,archived:e.archived};
+                  const eff=editRow.effFrom||todayStr().slice(0,7);
+                  if(+editRow.salary!==e.salary||+editRow.lp!==e.lp||+editRow.ep!==e.ep){
+                    addSalHist(e.id,eff,+editRow.salary,+editRow.lp||0,+editRow.ep||0);
+                  }
+                  saveEmps(emps.map(x=>x.id===e.id?updated:x));
+                  setEditId(null);
+                },style:btn(GREEN,'#fff','4px 10px')},'✓ Save'),
+                React.createElement('button',{onClick:()=>setEditId(null),style:btn('#e5e7eb','#374151','4px 10px')},'✕')
+              )
+            )
+          )
+        :
+          React.createElement('tr',{key:e.id,style:{background:isArchived?(i%2===0?'#f8fafc':'#f1f5f9'):i%2===0?'#fff':'#f8fafc',opacity:isArchived?.75:1}},
+            React.createElement('td',{style:{...tdS,color:'#94a3b8',fontSize:12}},i+1),
+            React.createElement('td',{style:{...tdS,fontWeight:900,color:isArchived?'#94a3b8':NAVY}},
+              e.name,
+              isArchived&&React.createElement('span',{style:{marginLeft:6,fontSize:10,background:'#e2e8f0',color:'#64748b',padding:'1px 6px',borderRadius:4,fontWeight:700}},'ARCHIVED')
+            ),
+            showSalary&&React.createElement('td',{style:{...tdS,color:isArchived?'#94a3b8':'#374151'}},
+              React.createElement('div',{style:{fontWeight:700}},`₹${e.salary.toLocaleString()}`),
+              (salHist[e.id]||[]).length>1&&React.createElement('div',{style:{fontSize:9,color:'#94a3b8',marginTop:2}},
+                `${(salHist[e.id]||[]).length} salary entries`
+              )
+            ),
+            showSalary&&React.createElement('td',{style:{...tdS,color:e.lp>0?RED:'#cbd5e1'}},e.lp>0?`₹${e.lp}`:'—'),
+            showSalary&&React.createElement('td',{style:{...tdS,color:e.ep>0?RED:'#cbd5e1'}},e.ep>0?`₹${e.ep}`:'—'),
+            React.createElement('td',{style:{...tdS,color:'#64748b',fontSize:13}},e.mobile||'—'),
+            React.createElement('td',{style:{...tdS,whiteSpace:'nowrap'}},
+              !isArchived&&React.createElement('button',{onClick:()=>{setEditId(e.id);setEditRow({...e})},style:{...btn('#dbeafe','#1d4ed8','4px 10px'),marginRight:4}},'Edit'),
+              !isArchived&&React.createElement('button',{onClick:()=>{if(window.confirm(`Archive ${e.name}?\n\nStaff will be removed from daily attendance but all history will be preserved. You can restore anytime.`))archiveEmp(e.id)},style:btn('#fef3c7','#92400e','4px 10px')},'📦 Archive'),
+              isArchived&&React.createElement('button',{onClick:()=>restoreEmp(e.id),style:{...btn('#dcfce7','#166534','4px 10px'),marginRight:4}},'↩ Restore'),
+              isArchived&&React.createElement('button',{onClick:()=>permDelete(e.id,e.name),style:btn('#fee2e2','#dc2626','4px 10px')},'🗑 Delete')
+            )
+          )
+        ))
+      )
+    );
+
+    return React.createElement('div',null,
+      // Show/Hide salary bar
+      React.createElement('div',{style:{...card,padding:'10px 16px',display:'flex',alignItems:'center',gap:10,marginBottom:12}},
+        React.createElement('span',{style:{fontSize:13,color:'#64748b',fontWeight:600}},'💰 Salary Details:'),
+        showSalary
+          ?React.createElement('button',{onClick:()=>setShowSalary(false),style:btn('#fee2e2','#dc2626','6px 16px')},'🔒 Hide Salary')
+          :React.createElement('button',{onClick:()=>{if(!_spin&&!_pin)setShowSalary(true);else setSalaryPinPrompt(true);},style:btn(ORANGE,'#fff','6px 16px')},'🔓 Show Salary'),
+        !showSalary&&React.createElement('span',{style:{fontSize:11,color:'#94a3b8'}})
+      ),
+      empTable(activeEmps,false),
+      archivedEmps.length>0&&empTable(archivedEmps,true),
+      React.createElement('div',{style:{...card,padding:'16px 20px'}},
+        React.createElement('div',{style:{fontWeight:900,color:NAVY,marginBottom:12,fontSize:14}},'+ Add New Staff'),
+        React.createElement('div',{style:{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}},
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:3}},'Name *'),
+            React.createElement('input',{type:'text',value:newRow.name,
+              onChange:ev=>setNewRow({...newRow,name:ev.target.value}),
+              style:{...inp,width:130,borderColor:emps.some(e=>e.name===newRow.name.trim().toUpperCase()&&newRow.name.trim())? RED:'#e2e8f0'}})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:3}},'Salary'),
+            React.createElement('input',{type:'number',value:newRow.salary,onChange:ev=>setNewRow({...newRow,salary:ev.target.value}),style:{...inp,width:90}})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:3}},'Late Pen.'),
+            React.createElement('input',{type:'number',value:newRow.lp,onChange:ev=>setNewRow({...newRow,lp:ev.target.value}),style:{...inp,width:75}})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:3}},'Early Pen.'),
+            React.createElement('input',{type:'number',value:newRow.ep,onChange:ev=>setNewRow({...newRow,ep:ev.target.value}),style:{...inp,width:75}})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:3}},'Mobile (10 digits)'),
+            React.createElement('input',{type:'tel',value:newRow.mobile,
+              onChange:ev=>setNewRow({...newRow,mobile:ev.target.value.replace(/\D/g,'').slice(0,10)}),
+              maxLength:10,placeholder:'10 digits',
+              style:{...inp,width:120,borderColor:newRow.mobile&&newRow.mobile.length!==10?AMBER:'#e2e8f0'}})
+          ),
+          React.createElement('div',{style:{marginTop:19}},
+            React.createElement('button',{onClick:()=>{
+              const nm=newRow.name.trim().toUpperCase();
+              if(!nm||!newRow.salary){showFlash('⚠️ Name ane Salary jaruri che');return;}
+              if(emps.some(e=>e.name===nm)){showFlash('⚠️ '+nm+' naam already exists!');return;}
+              if(newRow.mobile&&newRow.mobile.length!==10){showFlash('⚠️ Mobile 10 digits hova joiye');return;}
+              saveEmps([...emps,{id:'e'+Date.now(),name:nm,salary:+newRow.salary,lp:+newRow.lp||0,ep:+newRow.ep||0,mobile:newRow.mobile,archived:false}],
+                [{type:'STAFF',empId:'new',empName:nm,detail:`Added | Salary:₹${newRow.salary} | Mobile:${newRow.mobile||'—'}`}]);
+              setNewRow({name:'',salary:'',lp:'',ep:'',mobile:''});
+            },style:btn(ORANGE,'#fff','8px 22px')},'Add')
+          )
+        )
+      )
+    );
+  }
+
+  // ── Mahino Summary ─────────────────────────────────────────
+  function renderSum(){
+    const[sy,sm]=sumYM.split('-').map(Number);
+    const days=daysInMonth(sy,sm);
+    const dayArr=Array.from({length:days},(_,i)=>i+1);
+    const pill=(n,bg,fg)=>React.createElement('span',{style:{background:bg,color:fg,borderRadius:5,padding:'1px 9px',fontWeight:800,fontSize:13}},n);
+
+    return React.createElement('div',null,
+      React.createElement('div',{style:{...card,padding:'12px 16px',display:'flex',gap:12,alignItems:'center',marginBottom:12,flexWrap:'wrap'}},
+        // Month nav
+        React.createElement('button',{onClick:()=>setSumYM(shiftMonth(sumYM,-1)),style:{width:34,height:34,border:'1px solid #e2e8f0',borderRadius:8,background:'#fff',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}},'‹'),
+        React.createElement('div',{style:{fontWeight:900,fontSize:16,color:NAVY,minWidth:160,textAlign:'center'}},fmtMonthLabel(sumYM)),
+        React.createElement('button',{onClick:()=>setSumYM(shiftMonth(sumYM,1)),style:{width:34,height:34,border:'1px solid #e2e8f0',borderRadius:8,background:'#fff',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}},'›'),
+        React.createElement('button',{onClick:()=>setSumYM(todayStr().slice(0,7)),style:btn('#f1f5f9','#374151','5px 12px')},'This Month'),
+        React.createElement('div',{style:{display:'flex',gap:6,marginLeft:'auto'}},
+          React.createElement('button',{onClick:()=>setCalView(false),style:btn(!calView?NAVY:'#f1f5f9',!calView?'#fff':'#64748b','6px 14px')},'Summary'),
+          React.createElement('button',{onClick:()=>setCalView(true),style:btn(calView?NAVY:'#f1f5f9',calView?'#fff':'#64748b','6px 14px')},'Calendar')
+        ),
+        React.createElement('div',{style:{fontSize:12,color:'#94a3b8',fontWeight:700,padding:'5px 10px',background:'#f1f5f9',borderRadius:8}},`${days} days in month`),
+        showSalary
+          ?React.createElement('button',{onClick:()=>setShowSalary(false),style:btn('#fee2e2','#dc2626','6px 14px')},'🔒 Hide')
+          :React.createElement('button',{onClick:()=>{if(!_spin&&!_pin)setShowSalary(true);else setSalaryPinPrompt(true);},style:btn(ORANGE,'#fff','6px 14px')},'🔓 Show Salary'),
+        React.createElement('button',{onClick:()=>exportMahinoExcel(sumYM),style:{...btn('#16a34a','#fff','7px 14px'),marginLeft:4}},'📥 Export Excel')
+      ),
+
+      !calView?
+        React.createElement('div',{style:{...card,padding:0,overflowX:'auto'}},
+          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',minWidth:720}},
+            React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+              ...['Employee',...(showSalary?['Basic']:[]),(showSalary?null:'💰'),'P','A','H','Late','Early','UPAD','Jama','Est. Net','Old Bal','To Pay'].filter(Boolean).map(h=>React.createElement('th',{key:h,style:{...thS,color:'#fff',textAlign:h==='Employee'||h==='Basic'?'left':'center'}},h))
+            )),
+            React.createElement('tbody',null,...(()=>{
+              let totNet=0,totOb=0,totPay=0;
+              const rowEls=activeEmps.map((e,i)=>{
+                const sal=getSal(e.id,sumYM);
+                if(!sal)return null;
+                const net=sal.net;
+                const oldBal=getOb(e.id,sumYM);
+                const toPay=net-oldBal;
+                totNet+=net;totOb+=oldBal;totPay+=toPay;
+                return React.createElement('tr',{key:e.id,style:{background:i%2===0?'#fff':'#f8fafc'}},
+                  React.createElement('td',{style:{...tdS,fontWeight:900,color:NAVY}},e.name),
+                  showSalary&&React.createElement('td',{style:tdS},`₹${sal.basic.toLocaleString()}`),
+                  !showSalary&&React.createElement('td',{style:{...tdS,textAlign:'center'}},
+                    React.createElement('span',{style:{fontSize:10,color:'#94a3b8',cursor:'pointer'},onClick:()=>setSalaryPinPrompt(true)},'🔒')
+                  ),
+                  React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(sal.P,'#dcfce7','#166534')),
+                  React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(sal.A,'#fee2e2','#991b1b')),
+                  React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(sal.H,'#fef3c7','#92400e')),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',color:sal.L>0?RED:'#cbd5e1',fontWeight:sal.L>0?700:400}},sal.L||'—'),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',color:sal.E>0?AMBER:'#cbd5e1',fontWeight:sal.E>0?700:400}},sal.E||'—'),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',color:sal.U>0?'#7c3aed':'#cbd5e1',fontWeight:sal.U>0?700:400}},sal.U>0?`–₹${sal.U.toLocaleString()}`:'—'),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',color:sal.J>0?GREEN:'#cbd5e1',fontWeight:sal.J>0?700:400}},sal.J>0?`+₹${sal.J.toLocaleString()}`:'—'),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:net>=0?'#166534':'#dc2626'}},`₹${Math.round(net).toLocaleString()}`),
+                  React.createElement('td',{style:{...tdS,textAlign:'center'}},
+                    React.createElement('input',{type:'number',value:oldBal||'',onChange:ev=>setObVal(e.id,sumYM,ev.target.value),placeholder:'0',style:{...inp,width:80,padding:'3px 7px',fontSize:12,textAlign:'right',borderColor:'#e9d5ff',background:'#faf5ff'}})
+                  ),
+                  React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:toPay>=0?'#0369a1':'#dc2626',background:toPay>=0?'#e0f2fe':'#fee2e2',borderRadius:6,padding:'6px 10px'}},`₹${Math.round(toPay).toLocaleString()}`)
+                );
+              }).filter(Boolean);
+              const totalRow=React.createElement('tr',{key:'total',style:{background:NAVY,borderTop:'3px solid '+ORANGE}},
+                React.createElement('td',{style:{...tdS,color:'#fff',fontWeight:900},colSpan:9},'TOTAL'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:'#86efac'}},`₹${Math.round(totNet).toLocaleString()}`),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:'#c4b5fd'}},totOb>0?`₹${Math.round(totOb).toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:16,color:'#93c5fd'}},`₹${Math.round(totPay).toLocaleString()}`)
+              );
+              return[...rowEls,totalRow];
+            })())
+          )
+        )
+      :
+        React.createElement('div',{style:{...card,padding:0,overflowX:'auto'}},
+          React.createElement('table',{style:{borderCollapse:'collapse',fontSize:11}},
+            React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+              React.createElement('th',{style:{...thS,color:'#fff',minWidth:100,position:'sticky',left:0,background:NAVY,zIndex:2}},'Employee'),
+              ...dayArr.map(d=>{const dow=new Date(sy,sm-1,d).getDay();return React.createElement('th',{key:d,style:{padding:'6px 3px',textAlign:'center',minWidth:28,color:dow===0?'#fda4af':'#fff',background:NAVY}},
+                React.createElement('div',{style:{fontWeight:800,fontSize:12}},d),
+                React.createElement('div',{style:{fontSize:9,opacity:.7}},DOW[dow])
+              )})
+            )),
+            React.createElement('tbody',null,activeEmps.map((e,i)=>React.createElement('tr',{key:e.id,style:{background:i%2===0?'#fff':'#f8fafc'}},
+              React.createElement('td',{style:{padding:'7px 14px',fontWeight:900,color:NAVY,fontSize:12,position:'sticky',left:0,background:i%2===0?'#fff':'#f8fafc',borderRight:'2px solid #e2e8f0',zIndex:1}},e.name),
+              ...dayArr.map(d=>{
+                const ds=`${sumYM}-${String(d).padStart(2,'0')}`;
+                const ed=att[ds]?att[ds][e.id]:null;
+                const st=ed?ed.status:'';
+                const bg=st==='P'?'#bbf7d0':st==='A'?'#fecaca':st==='H'?'#fde68a':'transparent';
+                const fg=st==='P'?'#15803d':st==='A'?'#991b1b':st==='H'?'#92400e':'#cbd5e1';
+                return React.createElement('td',{key:d,style:{textAlign:'center',padding:'4px 2px',background:bg}},
+                  React.createElement('div',{style:{color:fg,fontWeight:800,fontSize:11}},st||'·'),
+                  ed&&ed.upad?React.createElement('div',{style:{color:'#7c3aed',fontSize:8,lineHeight:1}},`₹${ed.upad}`):null,
+                  ed&&ed.late?React.createElement('div',{style:{color:AMBER,fontSize:8,lineHeight:1}},'L'):null
+                );
+              })
+            )))
+          )
+        )
+    );
+  }
+
+  function renderSal(){
+    const emp=emps.find(e=>e.id===salEmp);
+    const s=emp?getSal(salEmp,salYM):null;
+    const[sy,sm]=salYM.split('-').map(Number);
+    const wd=daysInMonth(sy,sm);
+    const obAmt=getOb(salEmp,salYM);
+    const toPay=s?Math.round(s.net-obAmt):0;
+    const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const selector=React.createElement('div',{style:{...card,padding:'14px 20px',display:'flex',gap:16,flexWrap:'wrap',alignItems:'flex-end',marginBottom:16}},
+      React.createElement('div',null,
+        React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'Employee'),
+        React.createElement('select',{value:salEmp,onChange:e=>setSalEmp(e.target.value),style:{...inp,minWidth:140}},
+          React.createElement('option',{value:''},'Select staff...'),
+          emps.map(e=>React.createElement('option',{key:e.id,value:e.id},e.archived?'\u{1F4E6} '+e.name+' (Archived)':e.name))
+        )
+      ),
+      React.createElement('div',null,
+        React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:4}},'Month'),
+        React.createElement('div',{style:{display:'flex',alignItems:'center',gap:6}},
+          React.createElement('button',{onClick:()=>setSalYM(shiftMonth(salYM,-1)),style:{width:30,height:33,border:'1px solid #e2e8f0',borderRadius:7,background:'#fff',cursor:'pointer',fontSize:16}},'\u2039'),
+          React.createElement('div',{style:{fontWeight:800,color:NAVY,minWidth:130,textAlign:'center',fontSize:14}},fmtMonthLabel(salYM)),
+          React.createElement('button',{onClick:()=>setSalYM(shiftMonth(salYM,1)),style:{width:30,height:33,border:'1px solid #e2e8f0',borderRadius:7,background:'#fff',cursor:'pointer',fontSize:16}},'\u203a')
+        )
+      ),
+      React.createElement('div',{style:{fontSize:12,color:'#64748b',fontWeight:700,padding:'6px 12px',background:'#f1f5f9',borderRadius:8,alignSelf:'flex-end'}},wd+' days in month'),
+      React.createElement('div',{style:{display:'flex',gap:6,marginLeft:'auto',alignSelf:'flex-end'}},
+        React.createElement('button',{onClick:()=>setSalPanel(1),style:btn(salPanel===1?ORANGE:'#f1f5f9',salPanel===1?'#fff':'#64748b','7px 14px')},'\uD83D\uDCB0 Salary Slip'),
+        React.createElement('button',{onClick:()=>setSalPanel(2),style:btn(salPanel===2?ORANGE:'#f1f5f9',salPanel===2?'#fff':'#64748b','7px 14px')},'\uD83D\uDCC5 Day-wise')
+      )
+    );
+    if(!emp)return React.createElement('div',null,selector,React.createElement('div',{style:{textAlign:'center',padding:'40px 20px',color:'#94a3b8',fontSize:15,fontStyle:'italic'}},'\u2190 Staff select karo'));
+    const panel1=React.createElement('div',{style:{maxWidth:500}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',marginBottom:8}},
+        React.createElement('button',{onClick:()=>printDiv('slip-panel1',emp.name+' Salary Slip '+fmtMonthLabel(salYM)),style:{...btn(NAVY,'#fff','8px 20px')}},'\uD83D\uDDA8 Print A5 Slip')
+      ),
+      React.createElement('div',{id:'slip-panel1',style:{...card,padding:'20px 24px'}},
+        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:14,paddingBottom:12,borderBottom:'2px solid '+NAVY}},
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:20,fontWeight:900,color:NAVY}},emp.name),
+            React.createElement('div',{style:{color:'#94a3b8',fontSize:12,marginTop:2}},fmtMonthLabel(salYM)),
+            emp.archived&&React.createElement('div',{style:{fontSize:10,color:AMBER,fontWeight:700}},'ARCHIVED')
+          ),
+          React.createElement('div',{style:{textAlign:'right'}},
+            React.createElement('div',{style:{fontWeight:900,color:ORANGE,fontSize:13}},'EAGLE ENTERPRISE'),
+            React.createElement('div',{style:{fontSize:11,color:'#94a3b8'}},'Salary Slip'),
+            React.createElement('div',{style:{fontSize:10,color:'#94a3b8'}},wd+' days in month')
+          )
+        ),
+        ...(s?[
+          ['Basic Salary','\u20b9'+s.basic.toLocaleString(),''],
+          ['Per Day Rate','\u20b9'+s.perDay.toFixed(2),'#64748b'],
+          '---',
+          ['Present Days',s.P,GREEN],['Absent Days',s.A,s.A>0?RED:'#94a3b8'],['Half Days',s.H,s.H>0?AMBER:'#94a3b8'],
+          s.L>0?['Late Arrivals',s.L,AMBER]:null,
+          s.E>0?['Early Going',s.E,'#f97316']:null,
+          '---',
+          ['Deduction (Absent)','\u2013\u20b9'+(s.A*s.perDay).toFixed(2),s.A>0?RED:'#cbd5e1'],
+          ['Deduction (Half Day)','\u2013\u20b9'+(s.H*s.perDay*0.5).toFixed(2),s.H>0?RED:'#cbd5e1'],
+          s.lD>0?['Deduction (Late)','\u2013\u20b9'+s.lD.toFixed(2),RED]:null,
+          s.eD>0?['Deduction (Early)','\u2013\u20b9'+s.eD.toFixed(2),RED]:null,
+          '---',
+          ['Gross Salary','\u20b9'+s.gross.toFixed(2),NAVY],
+          s.U>0?['UPAD (Advance Deducted)','\u2013\u20b9'+s.U.toFixed(2),'#7c3aed']:null,
+          s.J>0?['Jama (Credit Received)','+\u20b9'+s.J.toFixed(2),GREEN]:null,
+        ].filter(Boolean):[]).map((row,i)=>row==='---'?
+          React.createElement('hr',{key:i,style:{border:'none',borderTop:'1px dashed #e2e8f0',margin:'6px 0'}})
+        :
+          React.createElement('div',{key:i,style:{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:13}},
+            React.createElement('span',{style:{color:'#64748b'}},row[0]),
+            React.createElement('span',{style:{fontWeight:700,color:row[2]||'#374151'}},row[1])
+          )
+        ),
+        React.createElement('div',{style:{marginTop:12,padding:'12px 16px',background:NAVY,borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}},
+          React.createElement('span',{style:{color:'#94a3b8',fontWeight:700,fontSize:13}},'Net Salary'),
+          React.createElement('span',{style:{color:'#fff',fontSize:22,fontWeight:900}},'\u20b9'+(s?Math.round(s.net).toLocaleString():'0'))
+        ),
+        React.createElement('div',{style:{marginTop:10,padding:'10px 14px',background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:8}},
+          React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}},
+            React.createElement('span',{style:{fontSize:12,color:'#7c3aed',fontWeight:700}},'Old Balance'),
+            React.createElement('input',{type:'number',value:obAmt||'',onChange:ev=>setObVal(salEmp,salYM,ev.target.value),placeholder:'0',style:{...inp,width:100,padding:'3px 8px',borderColor:'#c4b5fd',fontSize:13,textAlign:'right'}})
+          ),
+          React.createElement('div',{style:{display:'flex',justifyContent:'space-between',padding:'10px 12px',background:obAmt>0?'#0369a1':'#475569',borderRadius:6,alignItems:'center'}},
+            React.createElement('span',{style:{color:'rgba(255,255,255,.8)',fontWeight:700,fontSize:12}},'Baaki To Pay'),
+            React.createElement('span',{style:{color:'#fff',fontSize:20,fontWeight:900}},'\u20b9'+toPay.toLocaleString())
+          )
+        ),
+        React.createElement('div',{style:{marginTop:14,display:'flex',justifyContent:'space-between',paddingTop:12,borderTop:'1px solid #e2e8f0'}},
+          React.createElement('div',{style:{textAlign:'center'}},React.createElement('div',{style:{borderTop:'1px solid #374151',width:110,marginBottom:4}}),React.createElement('div',{style:{fontSize:10,color:'#94a3b8'}},'Employee Signature')),
+          React.createElement('div',{style:{textAlign:'center'}},React.createElement('div',{style:{borderTop:'1px solid #374151',width:110,marginBottom:4}}),React.createElement('div',{style:{fontSize:10,color:'#94a3b8'}},'Authorised Signature'))
+        )
+      )
+    );
+    const dayArr2=Array.from({length:wd},(_,i)=>i+1);
+    let p2P=0,p2A=0,p2H=0,p2U=0,p2J=0,p2L=0,p2E=0;
+    const dayRows=dayArr2.map(d=>{
+      const ds=salYM+'-'+String(d).padStart(2,'0');
+      const ed=att[ds]&&att[ds][salEmp]?att[ds][salEmp]:null;
+      const st=ed?ed.status:'';
+      const uv=ed&&ed.upad?parseFloat(ed.upad)||0:0;
+      const dow=new Date(sy,sm-1,d).getDay();
+      if(st==='P')p2P++;else if(st==='A')p2A++;else if(st==='H')p2H++;
+      if(uv>0)p2U+=uv;else if(uv<0)p2J+=Math.abs(uv);
+      if(ed&&ed.late)p2L++;if(ed&&ed.early)p2E++;
+      return{d,dow,st,uv,ed};
+    });
+    const panel2=React.createElement('div',{style:{maxWidth:820}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',marginBottom:8}},
+        React.createElement('button',{onClick:()=>printDiv('slip-panel2',emp.name+' Attendance '+fmtMonthLabel(salYM),'landscape'),style:{...btn(NAVY,'#fff','8px 20px')}},'\uD83D\uDDA8 Print A5 Landscape')
+      ),
+      React.createElement('div',{id:'slip-panel2',style:{background:'#fff',borderRadius:10,boxShadow:'0 1px 5px rgba(0,0,0,.09)',padding:'14px 18px',width:'100%',fontFamily:'Nunito,sans-serif'}},
+        // Header row
+        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,paddingBottom:8,borderBottom:'2px solid '+NAVY}},
+          React.createElement('div',null,
+            React.createElement('span',{style:{fontSize:17,fontWeight:900,color:NAVY}},emp.name),
+            React.createElement('span',{style:{fontSize:11,color:'#94a3b8',marginLeft:10}},'\u2014 '+fmtMonthLabel(salYM)+' ('+wd+' days)'),
+            emp.archived&&React.createElement('span',{style:{marginLeft:8,fontSize:9,background:'#e2e8f0',color:'#64748b',padding:'1px 6px',borderRadius:4,fontWeight:700}},'ARCHIVED')
+          ),
+          React.createElement('div',{style:{textAlign:'right'}},
+            React.createElement('div',{style:{fontWeight:900,color:ORANGE,fontSize:11}},'EAGLE ENTERPRISE'),
+            React.createElement('div',{style:{fontSize:9,color:'#94a3b8'}},'Day-wise Attendance Summary')
+          )
+        ),
+        // Two columns side by side
+        React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}},
+          ...[0,1].map(col=>{
+            const half=Math.ceil(wd/2);
+            const start=col===0?1:half+1;
+            const end=col===0?half:wd;
+            const colRows=dayRows.filter(r=>r.d>=start&&r.d<=end);
+            const thStyle={padding:'3px 5px',color:'#fff',fontWeight:800,fontSize:9,textAlign:'center',background:NAVY};
+            return React.createElement('table',{key:col,style:{borderCollapse:'collapse',fontSize:10,width:'100%'}},
+              React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+                React.createElement('th',{style:{...thStyle,textAlign:'left',minWidth:28}},'Day'),
+                React.createElement('th',{style:{...thStyle,minWidth:30}},'Date'),
+                React.createElement('th',{style:{...thStyle,minWidth:22}},'St.'),
+                React.createElement('th',{style:{...thStyle,minWidth:18}},'L'),
+                React.createElement('th',{style:{...thStyle,minWidth:18}},'E'),
+                React.createElement('th',{style:{...thStyle,minWidth:36}},'UPAD'),
+                React.createElement('th',{style:{...thStyle,minWidth:36}},'Jama'),
+                React.createElement('th',{style:{...thStyle,textAlign:'left'}},'Remarks')
+              )),
+              React.createElement('tbody',null,colRows.map(({d,dow,st,uv,ed})=>{
+                const bg=st==='P'?'#f0fdf4':st==='A'?'#fff5f5':st==='H'?'#fffbeb':dow===0?'#f8fafc':'#fff';
+                const stColor=st==='P'?GREEN:st==='A'?RED:st==='H'?AMBER:'#94a3b8';
+                const tdC={padding:'3px 5px',borderBottom:'1px solid #f1f5f9'};
+                return React.createElement('tr',{key:d,style:{background:bg}},
+                  React.createElement('td',{style:{...tdC,fontWeight:700,color:dow===0?'#ef4444':'#374151',fontSize:9}},DAYS[dow]),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',color:'#64748b',fontSize:9}},String(d).padStart(2,'0')+'/'+String(sm).padStart(2,'0')),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',fontWeight:900,color:stColor}},st||'\u2014'),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',color:ed&&ed.late?AMBER:'#e2e8f0',fontWeight:800,fontSize:9}},ed&&ed.late?'\u25B2':''),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',color:ed&&ed.early?'#f97316':'#e2e8f0',fontWeight:800,fontSize:9}},ed&&ed.early?'\u25BC':''),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',color:'#7c3aed',fontWeight:uv>0?700:400,fontSize:9}},uv>0?'\u20b9'+uv:''),
+                  React.createElement('td',{style:{...tdC,textAlign:'center',color:GREEN,fontWeight:uv<0?700:400,fontSize:9}},uv<0?'\u20b9'+Math.abs(uv):''),
+                  React.createElement('td',{style:{...tdC,color:'#94a3b8',fontSize:8}},ed&&ed.remarks?ed.remarks:'')
+                );
+              }))
+            );
+          })
+        ),
+        // Summary pills
+        React.createElement('div',{style:{display:'flex',gap:6,paddingTop:8,borderTop:'1px solid #e2e8f0'}},
+          [{l:'Present',v:p2P,bg:'#dcfce7',fg:'#166534'},{l:'Absent',v:p2A,bg:'#fee2e2',fg:'#991b1b'},{l:'Half Day',v:p2H,bg:'#fef3c7',fg:'#92400e'},{l:'Late',v:p2L,bg:'#fef9c3',fg:'#854d0e'},{l:'Early Going',v:p2E,bg:'#ffedd5',fg:'#9a3412'}].map(({l,v,bg,fg})=>
+            React.createElement('div',{key:l,style:{flex:1,textAlign:'center',background:bg,borderRadius:6,padding:'5px 2px',opacity:v===0?.4:1}},
+              React.createElement('div',{style:{fontSize:15,fontWeight:900,color:fg}},v),
+              React.createElement('div',{style:{fontSize:8,color:fg,fontWeight:700}},l)
+            )
+          ),
+          p2U>0&&React.createElement('div',{style:{flex:1,textAlign:'center',background:'#faf5ff',borderRadius:6,padding:'5px 2px'}},React.createElement('div',{style:{fontSize:12,fontWeight:900,color:'#7c3aed'}},'\u20b9'+p2U),React.createElement('div',{style:{fontSize:8,color:'#7c3aed',fontWeight:700}},'UPAD')),
+          p2J>0&&React.createElement('div',{style:{flex:1,textAlign:'center',background:'#f0fdf4',borderRadius:6,padding:'5px 2px'}},React.createElement('div',{style:{fontSize:12,fontWeight:900,color:GREEN}},'\u20b9'+p2J),React.createElement('div',{style:{fontSize:8,color:GREEN,fontWeight:700}},'Jama'))
+        )
+      )
+    );
+    return React.createElement('div',null,selector,salPanel===1?panel1:panel2);
+  }
+
+  // ── HISTORY TAB ────────────────────────────────────────────
+  function renderHistory(){
+    // If no data at all
+    if(allMonths.length===0){
+      return React.createElement('div',{style:{...card,padding:40,textAlign:'center',color:'#94a3b8'}},
+        React.createElement('div',{style:{fontSize:40,marginBottom:12}},'📅'),
+        React.createElement('div',{style:{fontSize:15,fontStyle:'italic'}},'Koi history nathi — pehla attendance mark karo'),
+      );
+    }
+
+    // Drill-down: specific employee across all months
+    if(histEmp){
+      const emp=emps.find(e=>e.id===histEmp);
+      if(!emp) return null;
+      const months=allMonths.slice().reverse(); // oldest first
+      return React.createElement('div',{className:'slide'},
+        // Back button + title
+        React.createElement('div',{style:{...card,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,marginBottom:12}},
+          React.createElement('button',{onClick:()=>setHistEmp(null),style:btn('#f1f5f9','#374151','6px 14px')},'← Back'),
+          React.createElement('div',{style:{fontWeight:900,fontSize:17,color:NAVY}},`${emp.name} — Full History`),
+          React.createElement('div',{style:{fontSize:13,color:'#94a3b8',marginLeft:'auto'}},`${months.length} months`)
+        ),
+        React.createElement('div',{style:{...card,padding:0,overflowX:'auto'}},
+          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+            React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+              ...['Month','Basic','P','A','H','Late','Early','UPAD','Jama','Est. Net'].map(h=>React.createElement('th',{key:h,style:{...thS,color:'#fff',textAlign:h==='Month'||h==='Basic'?'left':'center'}},h))
+            )),
+            React.createElement('tbody',null,months.map((ym,i)=>{
+              const s=getSum(emp.id,ym);
+              const[y,m]=ym.split('-').map(Number);
+              const{salary,lp,ep}=getEmpData(emp.id,ym);
+              const wd=daysInMonth(y,m);
+              const perDay=salary/wd;
+              const deduct=(s.A+s.H*.5)*perDay+s.L*lp+s.E*ep;
+              const net=salary-deduct-s.U+s.J;
+              const total=s.P+s.A+s.H;
+              if(total===0)return null;
+              const pill=(n,bg,fg)=>React.createElement('span',{style:{background:bg,color:fg,borderRadius:5,padding:'1px 8px',fontWeight:800,fontSize:13}},n);
+              return React.createElement('tr',{key:ym,style:{background:i%2===0?'#fff':'#f8fafc'}},
+                React.createElement('td',{style:{...tdS,fontWeight:800,color:NAVY}},fmtMonthLabel(ym)),
+                React.createElement('td',{style:tdS},`₹${salary.toLocaleString()}`),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.P,'#dcfce7','#166534')),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.A,'#fee2e2','#991b1b')),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.H,'#fef3c7','#92400e')),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.L>0?RED:'#cbd5e1',fontWeight:s.L>0?700:400}},s.L||'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.E>0?AMBER:'#cbd5e1',fontWeight:s.E>0?700:400}},s.E||'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.U>0?'#7c3aed':'#cbd5e1',fontWeight:s.U>0?700:400}},s.U>0?`–₹${s.U.toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.J>0?GREEN:'#cbd5e1',fontWeight:s.J>0?700:400}},s.J>0?`+₹${s.J.toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,color:net>=0?'#166534':'#dc2626'}},`₹${Math.round(net).toLocaleString()}`)
+              );
+            }))
+          )
+        )
+      );
+    }
+
+    // Drill-down: specific month detail
+    if(histYM){
+      const[sy,sm]=histYM.split('-').map(Number);
+      const days=daysInMonth(sy,sm);
+      const pill=(n,bg,fg)=>React.createElement('span',{style:{background:bg,color:fg,borderRadius:5,padding:'1px 8px',fontWeight:800,fontSize:13}},n);
+      let totalNet=0,totalToPay=0;
+      const rows=emps.map(e=>{
+        const s=getSum(e.id,histYM);
+        if(s.P+s.A+s.H===0)return null;
+        const{salary,lp,ep}=getEmpData(e.id,histYM);
+        const[hy,hm]=histYM.split('-').map(Number);
+        const perDay=salary/daysInMonth(hy,hm);
+        const deduct=(s.A+s.H*.5)*perDay+s.L*lp+s.E*ep;
+        const net=salary-deduct-s.U+s.J;
+        const oldBal=getOb(e.id,histYM);
+        const toPay=net-oldBal;
+        totalNet+=net;totalToPay+=toPay;
+        return{e,s,net,oldBal,toPay};
+      }).filter(Boolean);
+
+      return React.createElement('div',{className:'slide'},
+        React.createElement('div',{style:{...card,padding:'12px 18px',display:'flex',alignItems:'center',gap:12,marginBottom:12,flexWrap:'wrap'}},
+          React.createElement('button',{onClick:()=>setHistYM(null),style:btn('#f1f5f9','#374151','6px 14px')},'← Back'),
+          React.createElement('div',{style:{fontWeight:900,fontSize:17,color:NAVY}},fmtMonthLabel(histYM)),
+          React.createElement('div',{style:{fontSize:12,color:'#94a3b8'}},`${days} days`),
+          React.createElement('div',{style:{marginLeft:'auto',display:'flex',gap:8,flexWrap:'wrap'}},
+            React.createElement('div',{style:{background:'#dcfce7',color:'#166534',padding:'6px 14px',borderRadius:8,fontWeight:800,fontSize:14}},`Est. Net: ₹${Math.round(totalNet).toLocaleString()}`),
+            React.createElement('div',{style:{background:'#e0f2fe',color:'#0369a1',padding:'6px 14px',borderRadius:8,fontWeight:800,fontSize:14}},`To Pay: ₹${Math.round(totalToPay).toLocaleString()}`)
+          )
+        ),
+        React.createElement('div',{style:{...card,padding:0,overflowX:'auto'}},
+          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',minWidth:720}},
+            React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+              ...['Employee','Basic','P','A','H','Late','Early','UPAD','Jama','Est. Net','Old Bal','To Pay',''].map(h=>React.createElement('th',{key:h,style:{...thS,color:'#fff',textAlign:h==='Employee'||h==='Basic'?'left':'center'}},h))
+            )),
+            React.createElement('tbody',null,rows.map(({e,s,net,oldBal,toPay},i)=>
+              React.createElement('tr',{key:e.id,style:{background:i%2===0?'#fff':'#f8fafc',opacity:e.archived?.8:1}},
+                React.createElement('td',{style:{...tdS,fontWeight:900,color:e.archived?'#94a3b8':NAVY}},
+                  e.name,
+                  e.archived&&React.createElement('span',{style:{marginLeft:5,fontSize:9,background:'#e2e8f0',color:'#64748b',padding:'1px 5px',borderRadius:3,fontWeight:700,verticalAlign:'middle'}},'ARCHIVED')
+                ),
+                React.createElement('td',{style:{...tdS,color:e.archived?'#94a3b8':'#374151'}},`₹${e.salary.toLocaleString()}`),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.P,'#dcfce7','#166534')),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.A,'#fee2e2','#991b1b')),
+                React.createElement('td',{style:{...tdS,textAlign:'center'}},pill(s.H,'#fef3c7','#92400e')),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.L>0?RED:'#cbd5e1',fontWeight:s.L>0?700:400}},s.L||'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.E>0?AMBER:'#cbd5e1',fontWeight:s.E>0?700:400}},s.E||'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.U>0?'#7c3aed':'#cbd5e1',fontWeight:s.U>0?700:400}},s.U>0?`–₹${s.U.toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:s.J>0?GREEN:'#cbd5e1',fontWeight:s.J>0?700:400}},s.J>0?`+₹${s.J.toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:net>=0?'#166534':'#dc2626'}},`₹${Math.round(net).toLocaleString()}`),
+                React.createElement('td',{style:{...tdS,textAlign:'center',color:oldBal>0?'#7c3aed':'#cbd5e1',fontWeight:oldBal>0?700:400}},oldBal>0?`₹${oldBal.toLocaleString()}`:'—'),
+                React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:900,fontSize:15,color:toPay>=0?'#0369a1':'#dc2626',background:toPay>=0?'#e0f2fe':'#fee2e2',borderRadius:6}},`₹${Math.round(toPay).toLocaleString()}`),
+                React.createElement('td',{style:tdS},
+                  React.createElement('button',{onClick:()=>{setSalEmp(e.id);setSalYM(histYM);setTab('sal')},style:btn('#f0fdf4','#166534','4px 10px')},'Slip →')
+                )
+              )
+            ))
+          )
+        )
+      );
+    }
+
+    // Overview: all months as cards
+    return React.createElement('div',null,
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}},
+        React.createElement('div',{style:{fontWeight:900,color:NAVY,fontSize:15}},`${allMonths.length} months with data`),
+        React.createElement('div',{style:{fontSize:12,color:'#94a3b8'}})
+      ),
+      // Staff history row
+      React.createElement('div',{style:{...card,padding:'14px 18px',marginBottom:14}},
+        React.createElement('div',{style:{fontWeight:700,color:'#64748b',fontSize:12,marginBottom:10,letterSpacing:.5}},'EMPLOYEE WISE HISTORY →'),
+        React.createElement('div',{style:{display:'flex',flexWrap:'wrap',gap:8,marginBottom:archivedEmps.length>0?10:0}},
+          activeEmps.map(e=>React.createElement('button',{key:e.id,onClick:()=>setHistEmp(e.id),style:{
+            padding:'6px 14px',borderRadius:20,border:`1px solid #e2e8f0`,background:'#f8fafc',
+            cursor:'pointer',fontWeight:700,fontSize:13,color:NAVY,fontFamily:'inherit',
+          }},e.name))
+        ),
+        archivedEmps.length>0&&React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:11,color:'#94a3b8',fontWeight:700,marginBottom:6,marginTop:4}},'📦 ARCHIVED STAFF'),
+          React.createElement('div',{style:{display:'flex',flexWrap:'wrap',gap:8}},
+            archivedEmps.map(e=>React.createElement('button',{key:e.id,onClick:()=>setHistEmp(e.id),style:{
+              padding:'6px 14px',borderRadius:20,border:`1px dashed #cbd5e1`,background:'#f1f5f9',
+              cursor:'pointer',fontWeight:700,fontSize:13,color:'#94a3b8',fontFamily:'inherit',
+            }},`📦 ${e.name}`))
+          )
+        )
+      ),
+      // Month cards grid
+      React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}},
+        allMonths.map(ym=>{
+          const[y,m]=ym.split('-').map(Number);
+          const days=daysInMonth(y,m);
+          // Quick stats across all employees
+          let totalP=0,totalA=0,totalH=0,totalUpad=0,markedDays=new Set();
+          emps.forEach(e=>{
+            for(let d=1;d<=days;d++){
+              const ds=`${ym}-${String(d).padStart(2,'0')}`;
+              const ed=att[ds]?.[e.id];
+              if(ed&&ed.status){
+                markedDays.add(ds);
+                if(ed.status==='P')totalP++;
+                else if(ed.status==='A')totalA++;
+                else if(ed.status==='H')totalH++;
+                if(ed.upad)totalUpad+=parseFloat(ed.upad)||0;
+              }
+            }
+          });
+          const isThisMonth=ym===todayStr().slice(0,7);
+          return React.createElement('div',{key:ym,onClick:()=>setHistYM(ym),style:{
+            ...card,padding:'16px 18px',cursor:'pointer',transition:'box-shadow .15s, transform .15s',
+            border:isThisMonth?`2px solid ${ORANGE}`:'2px solid transparent',
+          },
+          onMouseEnter:e=>{e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,.14)';e.currentTarget.style.transform='translateY(-2px)'},
+          onMouseLeave:e=>{e.currentTarget.style.boxShadow='0 1px 5px rgba(0,0,0,.09)';e.currentTarget.style.transform='translateY(0)'}},
+            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}},
+              React.createElement('div',null,
+                React.createElement('div',{style:{fontWeight:900,fontSize:15,color:NAVY}},fmtMonthLabel(ym)),
+                React.createElement('div',{style:{fontSize:11,color:'#94a3b8',marginTop:1}},`${markedDays.size} days recorded`)
+              ),
+              isThisMonth&&React.createElement('span',{style:{background:ORANGE,color:'#fff',fontSize:10,fontWeight:800,padding:'2px 8px',borderRadius:20}},'THIS MONTH')
+            ),
+            React.createElement('div',{style:{display:'flex',gap:8,marginBottom:8}},
+              React.createElement('div',{style:{flex:1,textAlign:'center',background:'#dcfce7',borderRadius:8,padding:'6px 4px'}},
+                React.createElement('div',{style:{fontWeight:900,fontSize:18,color:'#166534'}},totalP),
+                React.createElement('div',{style:{fontSize:10,color:'#4ade80',fontWeight:700}},'P')
+              ),
+              React.createElement('div',{style:{flex:1,textAlign:'center',background:'#fee2e2',borderRadius:8,padding:'6px 4px'}},
+                React.createElement('div',{style:{fontWeight:900,fontSize:18,color:'#dc2626'}},totalA),
+                React.createElement('div',{style:{fontSize:10,color:'#f87171',fontWeight:700}},'A')
+              ),
+              React.createElement('div',{style:{flex:1,textAlign:'center',background:'#fef3c7',borderRadius:8,padding:'6px 4px'}},
+                React.createElement('div',{style:{fontWeight:900,fontSize:18,color:'#92400e'}},totalH),
+                React.createElement('div',{style:{fontSize:10,color:'#fbbf24',fontWeight:700}},'H')
+              ),
+              totalUpad>0&&React.createElement('div',{style:{flex:1,textAlign:'center',background:'#f5f3ff',borderRadius:8,padding:'6px 4px'}},
+                React.createElement('div',{style:{fontWeight:900,fontSize:13,color:'#7c3aed'}},`₹${(totalUpad/1000).toFixed(0)}k`),
+                React.createElement('div',{style:{fontSize:10,color:'#a78bfa',fontWeight:700}},'UPAD')
+              )
+            ),
+            React.createElement('div',{style:{fontSize:12,color:'#94a3b8',textAlign:'right',marginTop:4}},
+              'Click for details →'
+            )
+          );
+        })
+      )
+    );
+  }
+
+  // ── Audit Log ──────────────────────────────────────────────
+  function renderLog(){
+    const TYPE_META={
+      ATT:{lbl:'Attendance',bg:'#dbeafe',fg:'#1e40af',icon:'📋'},
+      UPAD:{lbl:'UPAD / Jama',bg:'#f3e8ff',fg:'#6b21a8',icon:'💰'},
+      OB:{lbl:'Old Balance',bg:'#ede9fe',fg:'#5b21b6',icon:'🔄'},
+      SAL:{lbl:'Salary Change',bg:'#dcfce7',fg:'#14532d',icon:'💼'},
+      STAFF:{lbl:'Staff Change',bg:'#fef9c3',fg:'#713f12',icon:'👤'},
+    };
+    // Filter
+    const filtered=auditLog.filter(e=>{
+      if(logFilter.type&&e.type!==logFilter.type)return false;
+      if(logFilter.empId&&e.empId!==logFilter.empId)return false;
+      if(logFilter.ym&&e.ym!==logFilter.ym&&(!e.date||!e.date.startsWith(logFilter.ym)))return false;
+      return true;
+    });
+    const fmtTs=(ts)=>{
+      const d=new Date(ts);
+      return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})+' '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
+    };
+    return React.createElement('div',null,
+      // Filter bar
+      React.createElement('div',{style:{...card,padding:'12px 16px',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center',marginBottom:12}},
+        React.createElement('span',{style:{fontWeight:900,color:NAVY,fontSize:14}},'📝 Audit Log'),
+        React.createElement('span',{style:{fontSize:12,color:'#94a3b8',fontWeight:600}},`${auditLog.length} total entries`),
+        React.createElement('select',{value:logFilter.type,onChange:ev=>setLogFilter({...logFilter,type:ev.target.value}),style:{...inp,padding:'5px 8px',fontSize:12}},
+          React.createElement('option',{value:''},'All Types'),
+          Object.entries(TYPE_META).map(([k,v])=>React.createElement('option',{key:k,value:k},v.icon+' '+v.lbl))
+        ),
+        React.createElement('select',{value:logFilter.empId,onChange:ev=>setLogFilter({...logFilter,empId:ev.target.value}),style:{...inp,padding:'5px 8px',fontSize:12}},
+          React.createElement('option',{value:''},'All Staff'),
+          emps.map(e=>React.createElement('option',{key:e.id,value:e.id},e.name))
+        ),
+        React.createElement('input',{type:'month',value:logFilter.ym,onChange:ev=>setLogFilter({...logFilter,ym:ev.target.value}),style:{...inp,padding:'5px 8px',fontSize:12}}),
+        (logFilter.type||logFilter.empId||logFilter.ym)&&React.createElement('button',{onClick:()=>setLogFilter({type:'',empId:'',ym:''}),style:btn('#fee2e2','#dc2626','5px 12px')},'✕ Clear'),
+        React.createElement('div',{style:{marginLeft:'auto',fontSize:12,color:'#94a3b8'}},`${filtered.length} results`),
+        auditLog.length>0&&React.createElement('button',{onClick:()=>{if(window.confirm('Full log delete karvu? This cannot be undone.')){setAuditLog([]);stSave(K_LOG,[]);showFlash('✓ Log cleared');}},style:btn('#f1f5f9','#94a3b8','5px 10px')}, '🗑 Clear Log')
+      ),
+      filtered.length===0?
+        React.createElement('div',{style:{...card,padding:'40px',textAlign:'center',color:'#94a3b8',fontStyle:'italic'}},'No log entries found')
+      :
+      React.createElement('div',{style:{...card,padding:0,overflow:'hidden'}},
+        React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',minWidth:600}},
+          React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+            ...['Time','Type','Staff','Date / Month','Change Detail'].map(h=>React.createElement('th',{key:h,style:{...thS,color:'#fff',textAlign:'left',fontSize:11}},'  '+h))
+          )),
+          React.createElement('tbody',null,filtered.map((entry,i)=>{
+            const tm=TYPE_META[entry.type]||{lbl:entry.type,bg:'#f1f5f9',fg:'#374151',icon:'•'};
+            return React.createElement('tr',{key:i,style:{background:i%2===0?'#fff':'#f8fafc',borderBottom:'1px solid #f1f5f9'}},
+              React.createElement('td',{style:{...tdS,fontSize:11,color:'#64748b',whiteSpace:'nowrap'}},fmtTs(entry.ts)),
+              React.createElement('td',{style:{...tdS,whiteSpace:'nowrap'}},
+                React.createElement('span',{style:{background:tm.bg,color:tm.fg,padding:'2px 8px',borderRadius:5,fontSize:10,fontWeight:800}},tm.icon+' '+tm.lbl)
+              ),
+              React.createElement('td',{style:{...tdS,fontWeight:700,color:NAVY,fontSize:12}},entry.empName||'—'),
+              React.createElement('td',{style:{...tdS,fontSize:11,color:'#64748b'}},entry.date||entry.ym||'—'),
+              React.createElement('td',{style:{...tdS,fontSize:12,color:'#374151',maxWidth:320}},entry.detail||'—')
+            );
+          }))
+        )
+      )
+    );
+  }
+
+  const TABS=[{id:'att',lbl:'📋 Hajar'},{id:'emp',lbl:'👥 Staff'},{id:'sum',lbl:'📊 Mahino'},{id:'sal',lbl:'💰 Pagar Slip'},{id:'hist',lbl:'📅 History'},{id:'log',lbl:'📝 Log'}];
+
+  return React.createElement('div',{style:{minHeight:'100vh',background:'#eef2f7'}},
+    settingsModal,
+    salaryPinModal,
+    React.createElement('div',{style:{background:NAVY,padding:'10px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}},
+      React.createElement('div',null,
+        React.createElement('div',{style:{color:ORANGE,fontWeight:900,fontSize:16,letterSpacing:1.2}},'EAGLE ENTERPRISE'),
+        React.createElement('div',{style:{color:'#475569',fontSize:11,marginTop:1}},'Staff Attendance System')
+      ),
+      React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
+        flash&&React.createElement('div',{className:'flash',style:{background:GREEN,color:'#fff',padding:'4px 12px',borderRadius:20,fontSize:12,fontWeight:700}},flash),
+        syncStatus==='syncing'&&React.createElement('div',{style:{color:'#93c5fd',fontSize:11,fontWeight:600}},'⟳ Syncing...'),
+        syncStatus==='ok'&&React.createElement('div',{style:{color:'#86efac',fontSize:11,fontWeight:600}},'✓ Synced'),
+        syncStatus==='err'&&React.createElement('div',{style:{color:'#fca5a5',fontSize:11,fontWeight:600}},'⚠ Sync error'),
+        _gsUrl?React.createElement('div',{style:{background:'#166534',color:'#86efac',fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:6}},
+          '☁ GSheets ON'
+        ):React.createElement('div',{style:{background:'#7f1d1d',color:'#fca5a5',fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:6,cursor:'pointer'},onClick:openSettings},
+          '☁ Setup Cloud'
+        ),
+        React.createElement('div',{style:{color:'#475569',fontSize:11,fontWeight:600}},`${activeEmps.length} Active`),
+        React.createElement('button',{onClick:openSettings,style:{...btn('#2d4a6e','#94a3b8','5px 10px'),fontSize:11}},'⚙️ Settings'),
+        React.createElement('button',{onClick:()=>{sessionStorage.removeItem('eagle_authed');window.location.reload();},style:{...btn('#1e3a5f','#64748b','5px 10px'),fontSize:11}},'🔒 Lock')
+      )
+    ),
+    React.createElement('div',{style:{background:'#fff',borderBottom:'2px solid #e2e8f0',display:'flex',overflowX:'auto'}},
+      TABS.map(t=>React.createElement('button',{key:t.id,onClick:()=>{setTab(t.id);setHistYM(null);setHistEmp(null)},style:{
+        padding:'13px 18px',border:'none',background:'none',cursor:'pointer',fontWeight:700,fontSize:13,
+        color:tab===t.id?ORANGE:'#64748b',
+        borderBottom:tab===t.id?`3px solid ${ORANGE}`:'3px solid transparent',
+        fontFamily:'inherit',whiteSpace:'nowrap',
+      }},t.lbl))
+    ),
+    React.createElement('div',{style:{padding:14,maxWidth:1200,margin:'0 auto'}},
+      tab==='att'&&renderAtt(),
+      tab==='emp'&&renderEmp(),
+      tab==='sum'&&renderSum(),
+      tab==='sal'&&renderSal(),
+      tab==='hist'&&renderHistory(),
+      tab==='log'&&renderLog()
+    )
+  );
+}
+
+ReactDOM.render(React.createElement(App),document.getElementById('root'));
+</script>
+</body>
+</html>
