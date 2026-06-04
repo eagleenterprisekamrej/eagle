@@ -260,6 +260,7 @@ function App() {
   // ── Staff drag-reorder ────────────────────────────────────────
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [salHistMgr, setSalHistMgr] = useState(null);
 
   // ── Audit log ────────────────────────────────────────────────
   const [auditLog, setAuditLog] = useState([]);
@@ -556,8 +557,10 @@ function App() {
   // ═══════════════════════════════════════════════════════════
   const addSalHist = (eid, ym, salary, lp, ep) => {
     const existing = salHist[eid]||[];
-    const hasEarlier = existing.some(h=>h.ym<ym);
-    let base = existing.filter(h=>h.ym!==ym);
+    // Remove same YM entry + remove any future entries that conflict (same salary value as new)
+    // Keep only entries strictly before the new effective date
+    let base = existing.filter(h=>h.ym<ym);
+    const hasEarlier = base.length > 0;
     if (!hasEarlier) {
       const emp = emps.find(e=>e.id===eid);
       if (emp) base = [{ym:'2020-01',salary:emp.salary,lp:emp.lp||0,ep:emp.ep||0},...base];
@@ -707,6 +710,48 @@ function App() {
         React.createElement('button',{onClick:()=>{setSalaryPinPrompt(false);setSalaryPinInput('');},style:{...btn('#f1f5f9','#374151','9px 0'),flex:1,fontSize:13}},'Cancel'),
         React.createElement('button',{onClick:()=>trySalaryPin(salaryPinInput),style:{...btn(ORANGE,'#fff','9px 0'),flex:1,fontSize:13}},'Unlock')
       )
+    )
+  );
+
+
+  // ═══════════════════════════════════════════════════════════
+  // RENDER: SALARY HISTORY MANAGER MODAL
+  // ═══════════════════════════════════════════════════════════
+  const salHistMgrModal = salHistMgr && React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:3000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}},
+    React.createElement('div',{style:{background:'#fff',borderRadius:16,padding:'24px 24px',maxWidth:480,width:'100%',maxHeight:'85vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.4)'}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}},
+        React.createElement('div',{style:{fontWeight:900,fontSize:16,color:NAVY}},'📄 Salary History — '+(emps.find(e=>e.id===salHistMgr)||{}).name),
+        React.createElement('button',{onClick:()=>setSalHistMgr(null),style:btn('#f1f5f9','#374151','6px 12px')},'✕ Close')
+      ),
+      React.createElement('div',{style:{fontSize:11,color:'#64748b',marginBottom:12,background:'#fef3c7',padding:'8px 12px',borderRadius:8,fontWeight:600}},
+        '⚠️ Galat salary entry DELETE karo — salary slip automatically correct thase.'
+      ),
+      React.createElement('table',{style:{width:'100%',borderCollapse:'collapse'}},
+        React.createElement('thead',null,React.createElement('tr',{style:{background:NAVY}},
+          React.createElement('th',{style:{...thS,color:'#fff',textAlign:'left'}},'From Month'),
+          React.createElement('th',{style:{...thS,color:'#fff'}},'Salary'),
+          React.createElement('th',{style:{...thS,color:'#fff'}},'Late Pen.'),
+          React.createElement('th',{style:{...thS,color:'#fff'}},'Action')
+        )),
+        React.createElement('tbody',null,(salHist[salHistMgr]||[]).map((h,i)=>
+          React.createElement('tr',{key:i,style:{background:i%2===0?'#fff':'#f8fafc'}},
+            React.createElement('td',{style:{...tdS,fontWeight:800,color:NAVY}},fmtMonthLabel(h.ym)),
+            React.createElement('td',{style:{...tdS,textAlign:'center',fontWeight:700,color:NAVY}},'₹'+h.salary.toLocaleString()),
+            React.createElement('td',{style:{...tdS,textAlign:'center'}},(h.lp||0)+(h.ep?' / '+h.ep:'')),
+            React.createElement('td',{style:{...tdS,textAlign:'center'}},
+              React.createElement('button',{onClick:()=>{
+                if(!confirm('Delete this entry?\n'+fmtMonthLabel(h.ym)+' — Rs'+h.salary))return;
+                const newHist=(salHist[salHistMgr]||[]).filter((_,j)=>j!==i);
+                db.ref('salaryHistory/'+salHistMgr).set(newHist.length?newHist:null);
+                const empName=(emps.find(e=>e.id===salHistMgr)||{}).name||salHistMgr;
+                logAudit([{type:'SAL',empId:salHistMgr,empName,ym:h.ym,detail:'History entry deleted: Rs'+h.salary+' from '+h.ym}]);
+                showFlash('\u2713 Entry deleted');
+              },style:btn('#ef4444','#fff','3px 10px')},'Delete')
+            )
+          )
+        ))
+      ),
+      (salHist[salHistMgr]||[]).length===0&&React.createElement('div',{style:{textAlign:'center',padding:24,color:'#94a3b8',fontSize:13}},'No salary history. Staff record salary is used.')
     )
   );
 
@@ -1068,7 +1113,8 @@ function App() {
                   saveEmp(updated,[{type:'STAFF',empId:e.id,empName:nm,detail:`Edited | Salary:₹${editRow.salary}`}]);
                   setEditId(null);
                 },style:btn(GREEN,'#fff','4px 10px')},'✓ Save'),
-                React.createElement('button',{onClick:()=>setEditId(null),style:btn('#e5e7eb','#374151','4px 10px')},'✕')
+                React.createElement('button',{onClick:()=>setEditId(null),style:btn('#e5e7eb','#374151','4px 10px')},'✕'),
+                React.createElement('button',{onClick:()=>setSalHistMgr(e.id),style:{...btn('#7c3aed','#fff','4px 8px'),fontSize:10,marginTop:4}},'📋 Sal History')
               )
             )
           )
@@ -1750,6 +1796,7 @@ function App() {
   return React.createElement('div',{style:{minHeight:'100vh',background:'#eef2f7'}},
     settingsModal,
     salaryPinModal,
+    salHistMgrModal,
     // Header
     React.createElement('div',{style:{background:NAVY,padding:'10px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}},
       React.createElement('div',null,
