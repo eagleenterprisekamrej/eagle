@@ -103,6 +103,10 @@ const fmtTs = (ts) => { try { const d=new Date(ts); return d.toLocaleDateString(
 const DOW = 'SMTWTFS';
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+// WhatsApp: open the staff member's chat with a ready-to-send message (wa.me — no API key, you tap Send).
+const waDigits = (m) => { let d=String(m||'').replace(/\D/g,''); if(d.length===10) d='91'+d; else if(d.length===11&&d[0]==='0') d='91'+d.slice(1); return d; };
+const waOpen = (mobile,text) => { const d=waDigits(mobile); if(d.length<12){ alert('Aa staff no mobile number nથી / barabar nથી — Staff screen ma number umero.'); return; } window.open('https://wa.me/'+d+'?text='+encodeURIComponent(text),'_blank'); };
+
 // Style constants
 const NAVY="#1c3557", ORANGE="#D97757", GREEN="#22c55e", RED="#ef4444", AMBER="#f59e0b";
 const card = {background:'#fff',borderRadius:12,boxShadow:'0 1px 5px rgba(0,0,0,.09)'};
@@ -968,7 +972,14 @@ function App() {
         ...['P','A','H'].map(st=>React.createElement('button',{key:st,onClick:()=>setStatus(e.id,st),style:{width:32,height:28,borderRadius:6,border:'none',cursor:'pointer',fontWeight:900,fontSize:13,background:d.status===st?(st==='P'?GREEN:st==='A'?RED:AMBER):'#f1f5f9',color:d.status===st?'#fff':'#9ca3af',transform:d.status===st?'scale(1.08)':'scale(1)',transition:'all .12s'}},st)),
         React.createElement('div',{style:{display:'flex',alignItems:'center',gap:3}},
           React.createElement('span',{style:{fontSize:11,color:'#94a3b8',fontWeight:700}},'₹'),
-          React.createElement('input',{type:'number',value:d.upad||'',onChange:ev=>setF(e.id,'upad',ev.target.value),onBlur:ev=>{if(ev.target.value!=='')showFlash('✓ Saved');},placeholder:'UPAD',style:{...inp,width:70,padding:'3px 7px',fontSize:12}})
+          React.createElement('input',{type:'number',value:d.upad||'',onChange:ev=>setF(e.id,'upad',ev.target.value),onBlur:ev=>{if(ev.target.value!=='')showFlash('✓ Saved');},placeholder:'UPAD',style:{...inp,width:70,padding:'3px 7px',fontSize:12}}),
+          (parseFloat(d.upad)||0)!==0 && React.createElement('button',{title:'WhatsApp this leti-deti to '+e.name,onClick:()=>{
+            const v=parseFloat(d.upad)||0;
+            const msg='Namaste '+e.name+' 🙏\n'+fmtFull(date)+'\n'+
+              (v>0?'Tamne ₹'+Math.abs(v).toLocaleString()+' UPAD (advance) aapyu.':'Tamara thi ₹'+Math.abs(v).toLocaleString()+' jama lidhu.')+
+              '\n— Eagle Enterprise';
+            waOpen(e.mobile,msg);
+          },style:{width:28,height:26,borderRadius:6,border:'none',cursor:'pointer',background:'#dcfce7',fontSize:13}},'📱')
         ),
         ...['late','early'].map(f=>React.createElement('label',{key:f,style:{display:'flex',alignItems:'center',gap:3,cursor:'pointer',fontSize:12,color:d[f]?AMBER:'#9ca3af',userSelect:'none',fontWeight:d[f]?700:400}},
           React.createElement('input',{type:'checkbox',checked:!!d[f],onChange:ev=>setF(e.id,f,ev.target.checked),style:{accentColor:ORANGE}}),
@@ -1338,7 +1349,12 @@ function App() {
     const selector = React.createElement('div',{style:{...card,padding:'12px 16px',display:'flex',gap:10,alignItems:'center',marginBottom:12,flexWrap:'wrap'}},
       React.createElement('select',{value:salEmp,onChange:ev=>setSalEmp(ev.target.value),style:{...inp,minWidth:160,fontWeight:700}},
         React.createElement('option',{value:''},'— Select Staff —'),
-        emps.map(e=>React.createElement('option',{key:e.id,value:e.id},e.name+(e.archived?' (archived)':'')))
+        React.createElement('optgroup',{label:'● Active Staff'},
+          activeEmps.map(e=>React.createElement('option',{key:e.id,value:e.id},e.name))
+        ),
+        archivedEmps.length>0 && React.createElement('optgroup',{label:'○ Archived (left) Staff'},
+          archivedEmps.map(e=>React.createElement('option',{key:e.id,value:e.id},e.name+' (archived)'))
+        )
       ),
       React.createElement('button',{onClick:()=>setSalYM(shiftMonth(salYM,-1)),style:{width:30,height:33,border:'1px solid #e2e8f0',borderRadius:7,background:'#fff',cursor:'pointer',fontSize:16}},'‹'),
       React.createElement('div',{style:{fontWeight:800,color:NAVY,minWidth:130,textAlign:'center',fontSize:14}},fmtMonthLabel(salYM)),
@@ -1352,7 +1368,19 @@ function App() {
     if (!emp) return React.createElement('div',null,selector,React.createElement('div',{style:{textAlign:'center',padding:'40px 20px',color:'#94a3b8',fontSize:15,fontStyle:'italic'}},'← Staff select karo'));
 
     const panel1 = React.createElement('div',{style:{maxWidth:500}},
-      React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',marginBottom:8}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:8}},
+        React.createElement('button',{onClick:()=>{
+          const slipText='*EAGLE ENTERPRISE — Salary Slip*\n'+emp.name+' | '+fmtMonthLabel(salYM)+'\n\n'+
+            'Basic: ₹'+s.basic.toLocaleString()+'\n'+
+            'Present: '+s.P+' | Absent: '+s.A+' | Half: '+s.H+'\n'+
+            'Gross: ₹'+Math.round(s.gross).toLocaleString()+'\n'+
+            (s.U>0?'UPAD (−): ₹'+Math.round(s.U).toLocaleString()+'\n':'')+
+            (s.J>0?'Jama (+): ₹'+Math.round(s.J).toLocaleString()+'\n':'')+
+            'Net Salary: ₹'+Math.round(s.net).toLocaleString()+'\n'+
+            (obAmt?'Old Balance: ₹'+Math.round(obAmt).toLocaleString()+'\n':'')+
+            '*Baaki To Pay: ₹'+toPay.toLocaleString()+'*\n\n— Eagle Enterprise';
+          waOpen(emp.mobile,slipText);
+        },style:{...btn(GREEN,'#fff','8px 20px')}},'📱 WhatsApp Slip'),
         React.createElement('button',{onClick:()=>printDiv('slip-panel1',emp.name+' Salary Slip'),style:{...btn(NAVY,'#fff','8px 20px')}},'🖨 Print A5 Slip')
       ),
       React.createElement('div',{id:'slip-panel1',style:{...card,padding:'20px 24px'}},
