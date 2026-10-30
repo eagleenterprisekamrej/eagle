@@ -117,6 +117,7 @@ const EAGLE_OK_ORIGIN = (o) => o === 'https://inbox.kidsroar.in' || /^http:\/\/l
 window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.ch === 'eagle' && d.t === 'hello' && EAGLE_OK_ORIGIN(e.origin)) { EAGLE_PARENT = e.origin; }
+  if (d.ch === 'eagle' && d.t === 'relock' && EAGLE_OK_ORIGIN(e.origin)) { try { sessionStorage.removeItem('eagle_v3_authed'); } catch {} location.reload(); }
   if (d.ch === 'eagle' && d.t === 'sent' && _waWaiters[d.id]) { _waWaiters[d.id](d); delete _waWaiters[d.id]; }
 });
 function waToast(msg) {
