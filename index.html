@@ -103,9 +103,38 @@ const fmtTs = (ts) => { try { const d=new Date(ts); return d.toLocaleDateString(
 const DOW = 'SMTWTFS';
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-// WhatsApp: open the staff member's chat with a ready-to-send message (wa.me — no API key, you tap Send).
+// WhatsApp send.
+// • Inside Eagle Inbox (iframe): message goes DIRECT from Eagle Inbox's own number via its login session
+//   (no API key ever lives in this page — Eagle Inbox does the send).
+// • Opened on its own (GitHub): falls back to wa.me (opens WhatsApp with the text ready, you tap Send).
 const waDigits = (m) => { let d=String(m||'').replace(/\D/g,''); if(d.length===10) d='91'+d; else if(d.length===11&&d[0]==='0') d='91'+d.slice(1); return d; };
-const waOpen = (mobile,text) => { const d=waDigits(mobile); if(d.length<12){ alert('Aa staff no mobile number nથી / barabar nથી — Staff screen ma number umero.'); return; } window.open('https://wa.me/'+d+'?text='+encodeURIComponent(text),'_blank'); };
+let EAGLE_PARENT = null;                                   // origin of the Eagle Inbox that embeds us (once it says hello)
+const _waWaiters = {};
+const EAGLE_OK_ORIGIN = (o) => o === 'https://inbox.kidsroar.in' || /^http:\/\/localhost(:\d+)?$/.test(o);
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.ch === 'eagle' && d.t === 'hello' && EAGLE_OK_ORIGIN(e.origin)) { EAGLE_PARENT = e.origin; }
+  if (d.ch === 'eagle' && d.t === 'sent' && _waWaiters[d.id]) { _waWaiters[d.id](d); delete _waWaiters[d.id]; }
+});
+function waToast(msg) {
+  let t = document.getElementById('waToast');
+  if (!t) { t = document.createElement('div'); t.id='waToast'; t.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1c3557;color:#fff;padding:10px 18px;border-radius:10px;font-weight:700;font-size:14px;z-index:99999;box-shadow:0 6px 24px rgba(0,0,0,.3);font-family:Nunito,sans-serif'; document.body.appendChild(t); }
+  t.textContent = msg; t.style.display='block'; clearTimeout(waToast._t); waToast._t = setTimeout(()=>{ t.style.display='none'; }, 3500);
+}
+const waFallback = (d,text) => window.open('https://wa.me/'+d+'?text='+encodeURIComponent(text),'_blank');
+function waOpen(mobile, text) {
+  const d = waDigits(mobile);
+  if (d.length < 12) { alert('Aa staff no mobile number nથી / barabar nથી — Staff screen ma number umero.'); return; }
+  if (!EAGLE_PARENT) { waFallback(d,text); return; }       // standalone -> wa.me
+  const id = 's'+Date.now()+Math.random().toString(36).slice(2,6);
+  waToast('📤 Sending via Eagle Inbox…');
+  new Promise(res => { _waWaiters[id]=res; setTimeout(()=>{ if(_waWaiters[id]){ delete _waWaiters[id]; res({ok:false,timeout:true}); } }, 15000); })
+    .then(r => {
+      if (r.ok) waToast('✅ Sent from Eagle Inbox'+(r.channel?' ('+r.channel+')':''));
+      else { waToast('⚠ Eagle Inbox send failed — opening WhatsApp'); waFallback(d,text); }
+    });
+  window.parent.postMessage({ ch:'eagle-att', t:'send', id, to:d, text }, EAGLE_PARENT);
+}
 
 // Style constants
 const NAVY="#1c3557", ORANGE="#D97757", GREEN="#22c55e", RED="#ef4444", AMBER="#f59e0b";
