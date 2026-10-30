@@ -42,6 +42,9 @@ input:focus,select:focus,textarea:focus{outline:2px solid #D97757;border-color:#
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- PDF (salary slip + day-wise in one file) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -134,6 +137,77 @@ function waOpen(mobile, text) {
       else { waToast('⚠ Eagle Inbox send failed — opening WhatsApp'); waFallback(d,text); }
     });
   window.parent.postMessage({ ch:'eagle-att', t:'send', id, to:d, text }, EAGLE_PARENT);
+}
+// Download a blob (used as fallback when there is no Eagle Inbox to send the file through).
+function dlBlob(blob, filename) { const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); }
+const blobB64 = (blob) => new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+// Send a FILE (e.g. the salary PDF) to a staff member: direct through Eagle Inbox, else download it + open WhatsApp text.
+async function sendDoc(mobile, caption, blob, filename) {
+  const d = waDigits(mobile);
+  if (d.length < 12) { alert('Aa staff no mobile number nથી / barabar nથી.'); return; }
+  if (!EAGLE_PARENT) { dlBlob(blob, filename); waFallback(d, caption + '\n\n(PDF download thayu — ahiya attach karo 📎)'); return; }
+  const id = 'd'+Date.now()+Math.random().toString(36).slice(2,6);
+  const b64 = await blobB64(blob);
+  waToast('📤 Sending PDF via Eagle Inbox…');
+  new Promise(res => { _waWaiters[id]=res; setTimeout(()=>{ if(_waWaiters[id]){ delete _waWaiters[id]; res({ok:false,timeout:true}); } }, 40000); })
+    .then(r => {
+      if (r.ok) waToast('✅ Slip PDF sent from Eagle Inbox'+(r.channel?' ('+r.channel+')':''));
+      else { waToast('⚠ Eagle Inbox send failed — PDF downloaded'); dlBlob(blob, filename); waFallback(d, caption + '\n\n(PDF download thayu — ahiya attach karo 📎)'); }
+    });
+  window.parent.postMessage({ ch:'eagle-att', t:'send', id, to:d, text:caption, file:{ name:filename, mime:'application/pdf', b64 } }, EAGLE_PARENT);
+}
+// Build ONE PDF: page 1 = salary slip (A5 portrait), page 2 = day-wise attendance (A5 landscape).
+function buildSalaryPdf(o) {
+  const { jsPDF } = window.jspdf;
+  const R = (n) => 'Rs. ' + Math.round(n||0).toLocaleString('en-IN');
+  const doc = new jsPDF({ unit:'mm', format:'a5', orientation:'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+  // ---- Page 1: salary slip ----
+  doc.setFillColor(28,53,87); doc.rect(0,0,W,20,'F');
+  doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text('EAGLE ENTERPRISE', 10, 9);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.text('Salary Slip  ·  '+o.monthLabel, 10, 15);
+  doc.setTextColor(28,53,87); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text(o.emp.name, 10, 29);
+  if (o.deptName){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(120); doc.text(o.deptName, 10, 34); }
+  const s=o.s;
+  const rows=[
+    ['Basic Salary', R(s.basic)], ['Per Day Rate', R(s.perDay)], ['Working Days', String(s.wd)],
+    ['Present', String(s.P)], ['Absent', String(s.A)], ['Half Days', String(s.H)],
+  ];
+  if(s.L>0) rows.push(['Late Arrivals', String(s.L)+(s.lD>0?'  (-'+R(s.lD).replace('Rs. ','Rs.')+')':'')]);
+  if(s.E>0) rows.push(['Early Going', String(s.E)+(s.eD>0?'  (-'+R(s.eD).replace('Rs. ','Rs.')+')':'')]);
+  rows.push(['Gross Salary', R(s.gross)]);
+  if(s.U>0) rows.push(['UPAD (Advance) -', R(s.U)]);
+  if(s.J>0) rows.push(['Jama (Credit) +', R(s.J)]);
+  doc.autoTable({ startY:38, margin:{left:10,right:10}, theme:'plain', styles:{fontSize:10,cellPadding:1.5}, columnStyles:{0:{textColor:90},1:{halign:'right',fontStyle:'bold'}}, body:rows });
+  let y=doc.lastAutoTable.finalY+2;
+  doc.setDrawColor(220); doc.line(10,y,W-10,y); y+=5;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(28,53,87);
+  doc.text('Net Salary', 10, y); doc.text(R(s.net), W-10, y, {align:'right'}); y+=6;
+  doc.setTextColor(124,58,237); doc.text('Old Balance', 10, y); doc.text(R(o.obAmt), W-10, y, {align:'right'}); y+=7;
+  doc.setFillColor(3,105,161); doc.roundedRect(10,y-5,W-20,9,1.5,1.5,'F'); doc.setTextColor(255); doc.setFontSize(12);
+  doc.text('Baaki To Pay', 13, y+1); doc.text(R(o.toPay), W-13, y+1, {align:'right'}); y+=16;
+  doc.setTextColor(120); doc.setFont('helvetica','normal'); doc.setFontSize(8);
+  doc.text('_______________', 12, y); doc.text('_______________', W-42, y);
+  doc.text('Employee Sign', 14, y+4); doc.text('Authorised Sign', W-40, y+4);
+  // ---- Page 2: day-wise ----
+  doc.addPage('a5','landscape');
+  const W2=doc.internal.pageSize.getWidth();
+  doc.setFillColor(28,53,87); doc.rect(0,0,W2,16,'F');
+  doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('EAGLE ENTERPRISE  ·  Day-wise Attendance', 10, 7);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(o.emp.name+'  ·  '+o.monthLabel, 10, 13);
+  const body=o.dayRows.map(r=>{
+    const ed=r.ed||{};
+    const amt = r.uv>0 ? 'UPAD '+R(r.uv) : r.uv<0 ? 'Jama '+R(Math.abs(r.uv)) : '';
+    return [ String(r.d).padStart(2,'0'), (DAYS[r.dow]||''), (r.st||'-'), amt, ed.late?'Late':'', ed.early?'Early':'', ed.remarks||'' ];
+  });
+  doc.autoTable({ startY:18, margin:{left:8,right:8}, head:[['Date','Day','St','UPAD / Jama','Late','Early','Remarks']],
+    styles:{fontSize:7,cellPadding:0.6}, headStyles:{fillColor:[28,53,87],textColor:255,fontSize:7},
+    columnStyles:{0:{cellWidth:12,halign:'center'},1:{cellWidth:14},2:{cellWidth:10,halign:'center'},3:{cellWidth:34},4:{cellWidth:14,halign:'center'},5:{cellWidth:14,halign:'center'},6:{cellWidth:'auto'}},
+    didParseCell:(h)=>{ if(h.section==='body'&&h.column.index===2){ const v=h.cell.raw; if(v==='P')h.cell.styles.textColor=[22,163,74]; else if(v==='A')h.cell.styles.textColor=[239,68,68]; else if(v==='H')h.cell.styles.textColor=[245,158,11]; } },
+    body });
+  let y2=doc.lastAutoTable.finalY+5; doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+  doc.text('Present: '+s.P+'   Absent: '+s.A+'   Half: '+s.H+'   UPAD: '+R(s.U)+'   Jama: '+R(s.J), 10, y2);
+  return doc.output('blob');
 }
 
 // Style constants
@@ -1004,8 +1078,11 @@ function App() {
           React.createElement('input',{type:'number',value:d.upad||'',onChange:ev=>setF(e.id,'upad',ev.target.value),onBlur:ev=>{if(ev.target.value!=='')showFlash('✓ Saved');},placeholder:'UPAD',style:{...inp,width:70,padding:'3px 7px',fontSize:12}}),
           (parseFloat(d.upad)||0)!==0 && React.createElement('button',{title:'WhatsApp this leti-deti to '+e.name,onClick:()=>{
             const v=parseFloat(d.upad)||0;
+            const extra=[]; if(d.late)extra.push('Late aavya'); if(d.early)extra.push('Early gaya'); if(d.remarks)extra.push('Nondh: '+d.remarks);
             const msg='Namaste '+e.name+' 🙏\n'+fmtFull(date)+'\n'+
               (v>0?'Tamne ₹'+Math.abs(v).toLocaleString()+' UPAD (advance) aapyu.':'Tamara thi ₹'+Math.abs(v).toLocaleString()+' jama lidhu.')+
+              (d.status==='P'?'\nHajari: Present':d.status==='A'?'\nHajari: Absent':d.status==='H'?'\nHajari: Half day':'')+
+              (extra.length?'\n'+extra.join(' · '):'')+
               '\n— Eagle Enterprise';
             waOpen(e.mobile,msg);
           },style:{width:28,height:26,borderRadius:6,border:'none',cursor:'pointer',background:'#dcfce7',fontSize:13}},'📱')
@@ -1399,17 +1476,14 @@ function App() {
     const panel1 = React.createElement('div',{style:{maxWidth:500}},
       React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:8}},
         React.createElement('button',{onClick:()=>{
-          const slipText='*EAGLE ENTERPRISE — Salary Slip*\n'+emp.name+' | '+fmtMonthLabel(salYM)+'\n\n'+
-            'Basic: ₹'+s.basic.toLocaleString()+'\n'+
-            'Present: '+s.P+' | Absent: '+s.A+' | Half: '+s.H+'\n'+
-            'Gross: ₹'+Math.round(s.gross).toLocaleString()+'\n'+
-            (s.U>0?'UPAD (−): ₹'+Math.round(s.U).toLocaleString()+'\n':'')+
-            (s.J>0?'Jama (+): ₹'+Math.round(s.J).toLocaleString()+'\n':'')+
-            'Net Salary: ₹'+Math.round(s.net).toLocaleString()+'\n'+
-            (obAmt?'Old Balance: ₹'+Math.round(obAmt).toLocaleString()+'\n':'')+
-            '*Baaki To Pay: ₹'+toPay.toLocaleString()+'*\n\n— Eagle Enterprise';
-          waOpen(emp.mobile,slipText);
-        },style:{...btn(GREEN,'#fff','8px 20px')}},'📱 WhatsApp Slip'),
+          const caption='*EAGLE ENTERPRISE — Salary Slip*\n'+emp.name+' | '+fmtMonthLabel(salYM)+'\n'+
+            'Net: ₹'+Math.round(s.net).toLocaleString()+'  |  Baaki To Pay: ₹'+toPay.toLocaleString()+'\n'+
+            'Salary slip + day-wise attendance PDF attached. 🙏\n— Eagle Enterprise';
+          try {
+            const blob=buildSalaryPdf({emp,s,obAmt,toPay,ym:salYM,monthLabel:fmtMonthLabel(salYM),deptName:(getDept(emp.deptId)||{}).name,dayRows});
+            sendDoc(emp.mobile,caption,blob,emp.name.replace(/\s+/g,'_')+'_'+salYM+'_Salary.pdf');
+          } catch(err){ alert('PDF banavama error: '+err.message); }
+        },style:{...btn(GREEN,'#fff','8px 20px')}},'📱 WhatsApp Slip (PDF)'),
         React.createElement('button',{onClick:()=>printDiv('slip-panel1',emp.name+' Salary Slip'),style:{...btn(NAVY,'#fff','8px 20px')}},'🖨 Print A5 Slip')
       ),
       React.createElement('div',{id:'slip-panel1',style:{...card,padding:'20px 24px'}},
